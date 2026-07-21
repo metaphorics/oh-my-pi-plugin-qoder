@@ -6,14 +6,14 @@
 	},
 	"metadata": {
 		"description": "Qoder integrations for oh-my-pi",
-		"version": "0.2.3"
+		"version": "0.2.4"
 	},
 	"plugins": [
 		{
 			"name": "oh-my-pi-plugin-qoder",
 			"description": "Qoder browser OAuth and model provider for oh-my-pi",
 			"source": "./",
-			"version": "0.2.3",
+			"version": "0.2.4",
 			"author": {
 				"name": "metaphorics"
 			},

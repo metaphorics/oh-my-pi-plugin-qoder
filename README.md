@@ -1,6 +1,6 @@
 # Qoder provider for oh-my-pi
 
-An unofficial [oh-my-pi](https://github.com/can1357/oh-my-pi) extension that adds Qoder browser login and the full Qoder model catalog: 15 base models plus 22 long-context aliases.
+An unofficial [oh-my-pi](https://github.com/can1357/oh-my-pi) extension that adds Qoder browser login and the legacy-supported Qoder model catalog: 9 base models plus 10 long-context aliases.
 
 ## Install
 
@@ -41,6 +41,8 @@ omp --model qoder/auto
 
 The catalog is a static seed reverse-engineered from an authenticated `qodercli --list-models` (Qoder's model-list endpoint is request-signed, so dynamic discovery is not possible). Every model streams through Qoder's OpenAI-compatible endpoint and allows 32k output tokens.
 
+Only the nine base models proven against the legacy api2-v2 endpoint are advertised. Six catalog families — Cantus (`cmodel`), Qwen3.8-Max-Preview (`qmodel_preview`), Qwen3.7-Max (`qmodel_latest`), Kimi-K3 (`kmodel_latest`), GLM-5.2 (`gm51model`), and DeepSeek-V4-Flash (`dfmodel`) — are served only by Qoder's WASM-signed api3 transport; the legacy endpoint accepts their requests but returns empty completions, so they were removed in 0.2.4 rather than silently failing.
+
 | Model | Wire key | Context | Reasoning | Notes |
 |---|---|---|---:|---|
 | Qoder (Auto) | `auto` | 180k | no | Server-side router; default pick |
@@ -48,15 +50,9 @@ The catalog is a static seed reverse-engineered from an authenticated `qodercli 
 | Performance | `performance` | 272k | no | |
 | Efficient | `efficient` | 180k | no | |
 | Lite | `lite` | 180k | no | Text only (no vision) |
-| Cantus | `cmodel` | 200k | yes | Efforts low–max, default high |
-| Qwen3.8-Max-Preview | `qmodel_preview` | 200k | yes | Fixed effort (always on) |
-| Qwen3.7-Max | `qmodel_latest` | 200k | no | |
 | Qwen3.7-Plus | `qmodel` | 200k | no | |
-| Kimi-K3 | `kmodel_latest` | 200k | no | |
 | Kimi-K2.7-Code | `kmodel` | 256k | no | Only model with the high-speed switch |
-| GLM-5.2 | `gm51model` | 200k | yes | Efforts high/max, default max |
 | DeepSeek-V4-Pro | `dmodel` | 200k | yes | Efforts high/max, default max |
-| DeepSeek-V4-Flash | `dfmodel` | 200k | yes | Efforts high/max, default max |
 | MiniMax-M3 | `mmodel` | 200k | no | |
 
 ### Context aliases
@@ -89,19 +85,19 @@ OpenAI's `service_tier` field is never sent to Qoder. `/fast` on any other Qoder
 - Uses Qoder's browser PKCE device flow and refresh endpoint, retrying transient network errors while authorization is pending.
 - Sends the Qoder `Cosy-*` client headers required by the model gateway.
 - Repairs Qoder's folded SSE framing (a final usage event split across a bare newline) before parsing, so token accounting survives; other providers' streams are untouched.
-- Registers 37 models: 15 base rows + 22 context aliases wired through `requestModelId` and `context_length`.
+- Registers 19 models: 9 base rows + 10 context aliases wired through `requestModelId` and `context_length`.
 - Omits OpenAI's unsupported `store` request field.
 - Becomes inert when omp already provides native Qoder support, including marketplace installs.
 
 ## Verification status
 
-Mocked network tests cover PKCE construction, pending polling, transient retry, token parsing, refresh requests, provider registration and collision handling, the 37-row model surface and alias metadata, folded-SSE usage recovery (including folds split across network chunks), alias wire routing with `context_length`, scoped high-speed injection, and the no-telemetry request posture. Package type checking is also exercised.
+Mocked network tests cover PKCE construction, pending polling, transient retry, token parsing, refresh requests, provider registration and collision handling, the 19-row model surface and alias metadata, folded-SSE usage recovery (including folds split across network chunks), alias wire routing with `context_length`, scoped high-speed injection, and the no-telemetry request posture. Package type checking is also exercised.
 
 Browser authorization and real-account streamed chat were validated with `qoder/auto`, a long-context alias, and `/fast` on `qoder/kmodel`. Tool calls and token refresh have not been validated end to end. Qoder can change these undocumented endpoints without notice.
 
 ## Scope and affiliation
 
-This project is not affiliated with or endorsed by Qoder. The integration was derived from the public `@qoder-ai/qodercli` package, version 1.1.1. Review Qoder's terms before using an unofficial client with your account.
+This project is not affiliated with or endorsed by Qoder. The integration was derived from the public `@qoder-ai/qodercli` package, with the current catalog validated against version 1.1.2. Review Qoder's terms before using an unofficial client with your account.
 
 ## License
 

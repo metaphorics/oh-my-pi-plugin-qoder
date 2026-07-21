@@ -97,7 +97,7 @@ test("registers the Qoder contract and skips a native-provider collision", async
 	expect(result.api).toBe("qoder-completions");
 	expect(result.authHeader).toBe(true);
 	expect(result.hasStreamSimple).toBe(true);
-	expect(result.modelCount).toBe(37);
+	expect(result.modelCount).toBe(19);
 	expect(result.modelId).toBe("auto");
 	expect(result.supportsStore).toBe(false);
 	expect(result.headers).toMatchObject({

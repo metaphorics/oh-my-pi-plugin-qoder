@@ -1,6 +1,6 @@
 {
 	"name": "oh-my-pi-plugin-qoder",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"description": "Unofficial oh-my-pi extension for Qoder browser login and its model catalog",
 	"type": "module",
 	"repository": {

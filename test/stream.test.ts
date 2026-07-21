@@ -254,12 +254,12 @@ describe("Qoder stream adapter", () => {
 		expect(wrongModel.requests[0]?.body.metadata).toBeUndefined();
 		expect(wrongModel.requests[0]?.body.service_tier).toBeUndefined();
 
-		const sibling = await runTurn(
-			"kmodel_latest",
+		const otherBase = await runTurn(
+			"qmodel",
 			() => sseResponse(WELL_FORMED_SSE),
 			{ serviceTier: "priority" },
 		);
-		expect(sibling.requests[0]?.body.metadata).toBeUndefined();
+		expect(otherBase.requests[0]?.body.metadata).toBeUndefined();
 	});
 });
 

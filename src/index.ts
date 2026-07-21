@@ -45,10 +45,14 @@ const QODER_MAX_OUTPUT_TOKENS = 32_768;
 //
 // Static seed reverse-engineered from an authenticated `qodercli --list-models`
 // (the account catalog endpoint is wasm-signed, so dynamic discovery is out of
-// scope). Fifteen base wire keys; the eleven multi-window models also get
-// `-400k`/`-1m` local aliases that pin `requestModelId` to the base wire key
-// and send a top-level `context_length` matching the alias window. `auto`,
-// `efficient`, and `lite` are 180k-only; `kmodel` is 256k-only — no aliases.
+// scope), pruned to the nine base wire keys the legacy api2-v2 transport
+// actually serves: live probing returns empty completions for the six
+// api3-only families (Cantus, Qwen3.8-Max-Preview, Qwen3.7-Max, Kimi-K3,
+// GLM-5.2, DeepSeek-V4-Flash), which require Qoder's WASM-signed transport.
+// The five multi-window models also get `-400k`/`-1m` local aliases that pin
+// `requestModelId` to the base wire key and send a top-level `context_length`
+// matching the alias window. `auto`, `efficient`, and `lite` are 180k-only;
+// `kmodel` is 256k-only — no aliases.
 // ---------------------------------------------------------------------------
 
 /** ProviderModelConfig plus the alias wire-key carrier (added to omp's extension contract). */
@@ -82,7 +86,6 @@ interface QoderBaseSpec {
 	contextWindow: number;
 	reasoning?: boolean;
 	thinking?: QoderThinking;
-	supportsReasoningEffort?: boolean;
 	/** Defaults to true; `lite` is the only text-only model. */
 	vision?: boolean;
 	/** Multi-window models get `-400k` and `-1m` context aliases. */
@@ -108,61 +111,16 @@ const QODER_BASE_SPECS: readonly QoderBaseSpec[] = [
 	{ id: "efficient", name: "Efficient", contextWindow: 180_000 },
 	{ id: "lite", name: "Lite", contextWindow: 180_000, vision: false },
 	{
-		id: "cmodel",
-		name: "Cantus",
-		contextWindow: 200_000,
-		reasoning: true,
-		thinking: effortThinking(EFFORT_LADDER_LOW_TO_MAX, "high"),
-		multiWindow: true,
-	},
-	{
-		id: "qmodel_preview",
-		name: "Qwen3.8-Max-Preview",
-		contextWindow: 200_000,
-		reasoning: true,
-		thinking: effortThinking(["high"], "high", true),
-		supportsReasoningEffort: false,
-		multiWindow: true,
-	},
-	{
-		id: "qmodel_latest",
-		name: "Qwen3.7-Max",
-		contextWindow: 200_000,
-		multiWindow: true,
-	},
-	{
 		id: "qmodel",
 		name: "Qwen3.7-Plus",
-		contextWindow: 200_000,
-		multiWindow: true,
-	},
-	{
-		id: "kmodel_latest",
-		name: "Kimi-K3",
 		contextWindow: 200_000,
 		multiWindow: true,
 	},
 	// Sole model with Qoder's `highspeed` feature switch (drives /fast); 256k-only.
 	{ id: "kmodel", name: "Kimi-K2.7-Code", contextWindow: 262_144 },
 	{
-		id: "gm51model",
-		name: "GLM-5.2",
-		contextWindow: 200_000,
-		reasoning: true,
-		thinking: effortThinking(EFFORT_LADDER_HIGH_TO_MAX, "max"),
-		multiWindow: true,
-	},
-	{
 		id: "dmodel",
 		name: "DeepSeek-V4-Pro",
-		contextWindow: 200_000,
-		reasoning: true,
-		thinking: effortThinking(EFFORT_LADDER_HIGH_TO_MAX, "max"),
-		multiWindow: true,
-	},
-	{
-		id: "dfmodel",
-		name: "DeepSeek-V4-Flash",
 		contextWindow: 200_000,
 		reasoning: true,
 		thinking: effortThinking(EFFORT_LADDER_HIGH_TO_MAX, "max"),
@@ -191,12 +149,7 @@ function buildQoderModels(): QoderModelConfig[] {
 			...(spec.thinking !== undefined ? { thinking: spec.thinking } : {}),
 			input: spec.vision === false ? ["text"] : ["text", "image"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			compat: {
-				supportsStore: false,
-				...(spec.supportsReasoningEffort === false
-					? { supportsReasoningEffort: false }
-					: {}),
-			},
+			compat: { supportsStore: false },
 			contextWindow: spec.contextWindow,
 			maxTokens: QODER_MAX_OUTPUT_TOKENS,
 		};
@@ -219,7 +172,7 @@ function buildQoderModels(): QoderModelConfig[] {
 	return models;
 }
 
-/** All 37 registered rows: 15 base models + 22 context aliases. */
+/** All 19 registered rows: 9 base models + 10 context aliases. */
 export const QODER_MODELS: readonly QoderModelConfig[] = buildQoderModels();
 
 const QODER_MODEL_INDEX: Record<string, QoderModelConfig> = Object.fromEntries(
@@ -430,8 +383,6 @@ type QoderOpenAICompatConfig = Partial<
 		| "allowsSyntheticReasoningContentForToolCalls"
 		| "disableReasoningOnToolChoice"
 		| "extraBody"
-		| "omitReasoningEffort"
-		| "supportsReasoningEffort"
 		| "requiresReasoningContentForAllAssistantTurns"
 		| "requiresReasoningContentForToolCalls"
 		| "supportsMultipleSystemMessages"
@@ -441,18 +392,7 @@ type QoderOpenAICompatConfig = Partial<
 const QODER_OPENAI_COMPAT_OVERRIDES: Readonly<
 	Record<string, QoderOpenAICompatConfig>
 > = {
-	qmodel_preview: {
-		supportsReasoningEffort: false,
-		omitReasoningEffort: true,
-	},
 	dmodel: {
-		supportsMultipleSystemMessages: true,
-		disableReasoningOnToolChoice: true,
-		requiresReasoningContentForToolCalls: true,
-		requiresReasoningContentForAllAssistantTurns: true,
-		allowsSyntheticReasoningContentForToolCalls: false,
-	},
-	dfmodel: {
 		supportsMultipleSystemMessages: true,
 		disableReasoningOnToolChoice: true,
 		requiresReasoningContentForToolCalls: true,
