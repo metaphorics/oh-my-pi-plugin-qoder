@@ -102,7 +102,7 @@ test("registers the Qoder contract and skips a native-provider collision", async
 	expect(result.supportsStore).toBe(false);
 	expect(result.headers).toMatchObject({
 		"Cosy-ClientType": "5",
-		"Cosy-Version": "1.1.1",
+		"Cosy-Version": "1.1.2",
 	});
 	expect(result.handlerIdentitiesMatch).toBe(true);
 	expect(result.apiKey).toBe("access-token");

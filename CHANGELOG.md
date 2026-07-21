@@ -2,6 +2,8 @@
 
 ## 0.2.4 - 2026-07-22
 
+- Aligned the client attribution with qodercli 1.1.2: `CLI_VERSION`, the `Cosy-Version` request header, and the token-refresh `User-Agent` now report 1.1.2.
+- Included the refresh endpoint's response body in `OAuthError` on HTTP failure so a 400 `invalid_grant` is classifiable from the error message; the status is preserved and an unreadable body falls back to the status-only message.
 - Pruned the catalog to the nine base models the legacy api2-v2 transport actually serves — Auto, Ultimate, Performance, Efficient, Lite, Qwen3.7-Plus, Kimi-K2.7-Code, DeepSeek-V4-Pro, and MiniMax-M3 — after live probing showed the endpoint accepts but returns empty completions for Cantus, Qwen3.8-Max-Preview, Qwen3.7-Max, Kimi-K3, GLM-5.2, and DeepSeek-V4-Flash. Those six families require Qoder's WASM-signed api3 transport, which this plugin deliberately does not implement.
 - Removed the 12 long-context aliases of the dropped bases; 19 registered rows remain (9 bases + 10 aliases), with the dropped wire ids now asserted absent in tests.
 

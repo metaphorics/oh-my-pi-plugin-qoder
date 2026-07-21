@@ -20,7 +20,7 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 
 export const PROVIDER_ID = "qoder";
-export const CLI_VERSION = "1.1.1";
+export const CLI_VERSION = "1.1.2";
 export const CLIENT_ID = "e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb";
 export const WEB_BASE =
 	process.env.QODER_WEB_BASE?.trim() || "https://qoder.com";
@@ -636,8 +636,9 @@ export async function refreshQoderToken(
 		});
 	}
 	if (!response.ok) {
+		const detail = await response.text().catch(() => "");
 		throw new AIError.OAuthError(
-			`Qoder token refresh failed (${response.status})`,
+			`Qoder token refresh failed (${response.status})${detail ? `: ${detail}` : ""}`,
 			{
 				kind: "token-refresh",
 				provider: PROVIDER_ID,

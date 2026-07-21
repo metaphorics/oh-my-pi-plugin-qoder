@@ -165,7 +165,7 @@ describe("Qoder OAuth", () => {
 		expect(requestInit?.headers).toMatchObject({
 			"Content-Type": "application/json",
 			Accept: "application/json",
-			"User-Agent": "qoder/1.1.1",
+			"User-Agent": "qoder/1.1.2",
 		});
 		expect(requestInit?.body).toBe(
 			JSON.stringify({ refresh_token: "old-refresh" }),
@@ -175,6 +175,48 @@ describe("Qoder OAuth", () => {
 			access: "new-access",
 			refresh: "old-refresh",
 			expires: now + 3_540_000,
+		});
+	});
+
+	it("surfaces the 400 invalid_grant body on refresh failure", async () => {
+		const fetchMock: FetchImpl = async () =>
+			new Response(JSON.stringify({ error: "invalid_grant" }), {
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			});
+
+		await expect(
+			refreshQoderToken(
+				{ access: "old-access", refresh: "old-refresh", expires: 0 },
+				fetchMock,
+			),
+		).rejects.toMatchObject({
+			name: "OAuthError",
+			kind: "token-refresh",
+			provider: "qoder",
+			status: 400,
+			message: expect.stringContaining("invalid_grant"),
+		});
+	});
+
+	it("still reports the status when the error body cannot be read", async () => {
+		const failingBody = new ReadableStream<Uint8Array>({
+			start: (controller) => controller.error(new Error("boom")),
+		});
+		const fetchMock: FetchImpl = async () =>
+			new Response(failingBody, { status: 500 });
+
+		await expect(
+			refreshQoderToken(
+				{ access: "old-access", refresh: "old-refresh", expires: 0 },
+				fetchMock,
+			),
+		).rejects.toMatchObject({
+			name: "OAuthError",
+			kind: "token-refresh",
+			provider: "qoder",
+			status: 500,
+			message: "Qoder token refresh failed (500)",
 		});
 	});
 
