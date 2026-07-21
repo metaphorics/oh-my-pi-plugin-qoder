@@ -4,11 +4,20 @@ An unofficial [oh-my-pi](https://github.com/can1357/oh-my-pi) extension that add
 
 ## Install
 
+Install through the repository's omp marketplace:
+
+```text
+/marketplace add metaphorics/oh-my-pi-plugin-qoder
+/marketplace install oh-my-pi-plugin-qoder@qoder-plugins
+```
+
+Restart omp after installation.
+
+Direct Git installation is also supported:
+
 ```sh
 omp plugin install https://github.com/metaphorics/oh-my-pi-plugin-qoder
 ```
-
-Restart omp after installation. This repository uses `package.json#omp.extensions`; do not install it through an omp marketplace catalog, because marketplace bundles do not load manifest-declared extension modules.
 
 ## Use
 
@@ -86,7 +95,7 @@ OpenAI's `service_tier` field is never sent to Qoder. `/fast` on any other Qoder
 
 Mocked network tests cover PKCE construction, pending polling, transient retry, token parsing, refresh requests, provider registration and collision handling, the 37-row model surface and alias metadata, folded-SSE usage recovery (including folds split across network chunks), alias wire routing with `context_length`, scoped high-speed injection, and the no-telemetry request posture. Package type checking is also exercised.
 
-Real-account browser authorization, streamed chat, tool calls, and token refresh have not been validated end to end. Qoder can change these undocumented endpoints without notice.
+Browser authorization and real-account streamed chat were validated with `qoder/auto`, a long-context alias, and `/fast` on `qoder/kmodel`. Tool calls and token refresh have not been validated end to end. Qoder can change these undocumented endpoints without notice.
 
 ## Scope and affiliation
 

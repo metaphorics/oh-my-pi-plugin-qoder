@@ -1,0 +1,27 @@
+{
+	"$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+	"name": "qoder-plugins",
+	"owner": {
+		"name": "metaphorics"
+	},
+	"metadata": {
+		"description": "Qoder integrations for oh-my-pi",
+		"version": "0.2.1"
+	},
+	"plugins": [
+		{
+			"name": "oh-my-pi-plugin-qoder",
+			"description": "Qoder browser OAuth and model provider for oh-my-pi",
+			"source": "./",
+			"version": "0.2.1",
+			"author": {
+				"name": "metaphorics"
+			},
+			"homepage": "https://github.com/metaphorics/oh-my-pi-plugin-qoder",
+			"repository": "https://github.com/metaphorics/oh-my-pi-plugin-qoder",
+			"license": "MIT",
+			"keywords": ["oh-my-pi", "omp", "qoder", "oauth", "provider"],
+			"category": "development"
+		}
+	]
+}

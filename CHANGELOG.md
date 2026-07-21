@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-07-22
+
+- Added an omp marketplace catalog for installing the provider from this repository.
+- Documented the authenticated browser-login and streamed-chat paths that were exercised against a real Qoder account.
+
 ## 0.2.0 - 2026-07-21
 
 - Expanded the model surface to the full authenticated catalog: 15 base models (Auto, Ultimate, Performance, Efficient, Lite, Cantus, Qwen3.8-Max-Preview, Qwen3.7-Max, Qwen3.7-Plus, Kimi-K3, Kimi-K2.7-Code, GLM-5.2, DeepSeek-V4-Pro, DeepSeek-V4-Flash, MiniMax-M3) with evidence-backed vision, reasoning, effort ladders, 32k output, and context windows.
