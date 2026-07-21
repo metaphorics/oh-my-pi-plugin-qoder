@@ -13,6 +13,8 @@ Install through the repository's omp marketplace:
 
 Restart omp after installation.
 
+This compatibility provider supports omp 17.x starting with 17.0.6. Hosts in that line that bundle Qoder load the extension inert instead of overriding the native provider.
+
 Direct Git installation is also supported:
 
 ```sh

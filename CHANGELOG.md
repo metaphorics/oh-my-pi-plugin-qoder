@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3 - 2026-07-22
+
+- Bounded the compatibility provider to omp 17.x; native-Qoder hosts in that line load the extension inert.
+
 ## 0.2.2 - 2026-07-22
 
 - Made marketplace loading self-contained by resolving runtime AI modules from the omp host instead of an undeclared catalog package.
