@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import type { ModelSpec } from "@oh-my-pi/pi-catalog/types";
 import type { QoderModelConfig } from "../src/index.js";
-import { isQoderFastModel, QODER_MODELS } from "../src/index.js";
+import {
+	isQoderFastModel,
+	MODEL_BASE,
+	PROVIDER_ID,
+	QODER_MODELS,
+	resolveQoderOpenAICompat,
+} from "../src/index.js";
 
 const BASE_IDS = [
 	"auto",
@@ -262,6 +270,29 @@ describe("Qoder model catalog", () => {
 			const base = byId(id);
 			expect(base.requestModelId, id).toBeUndefined();
 			expect(sparseCompat(base).extraBody, id).toBeUndefined();
+		}
+	});
+	it("pins marketplace compat defaults to the host catalog contract", () => {
+		for (const config of QODER_MODELS) {
+			const model = buildModel({
+				...config,
+				api: "openai-completions",
+				provider: PROVIDER_ID,
+				baseUrl: MODEL_BASE,
+				compat: config.compat as ModelSpec<"openai-completions">["compat"],
+			});
+			const expected = Object.fromEntries(
+				Object.entries(model.compat).filter(([, value]) => value !== undefined),
+			);
+			const actual = Object.fromEntries(
+				Object.entries(
+					resolveQoderOpenAICompat(
+						config.requestModelId ?? config.id,
+						config.compat as Parameters<typeof resolveQoderOpenAICompat>[1],
+					),
+				).filter(([, value]) => value !== undefined),
+			);
+			expect(actual, config.id).toEqual(expected);
 		}
 	});
 });

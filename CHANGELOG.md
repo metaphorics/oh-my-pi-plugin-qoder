@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 - 2026-07-22
+
+- Made marketplace loading self-contained by resolving runtime AI modules from the omp host instead of an undeclared catalog package.
+
 ## 0.2.1 - 2026-07-22
 
 - Added an omp marketplace catalog for installing the provider from this repository.

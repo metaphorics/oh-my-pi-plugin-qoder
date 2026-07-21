@@ -89,7 +89,7 @@ OpenAI's `service_tier` field is never sent to Qoder. `/fast` on any other Qoder
 - Repairs Qoder's folded SSE framing (a final usage event split across a bare newline) before parsing, so token accounting survives; other providers' streams are untouched.
 - Registers 37 models: 15 base rows + 22 context aliases wired through `requestModelId` and `context_length`.
 - Omits OpenAI's unsupported `store` request field.
-- Becomes inert when the installed omp version already provides a native `qoder` provider.
+- Becomes inert when omp already provides native Qoder support, including marketplace installs.
 
 ## Verification status
 

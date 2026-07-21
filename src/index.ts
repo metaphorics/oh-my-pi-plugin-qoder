@@ -14,8 +14,6 @@ import type {
 } from "@oh-my-pi/pi-ai/oauth";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { streamOpenAICompletions } from "@oh-my-pi/pi-ai/providers/openai-completions";
-import { buildModel } from "@oh-my-pi/pi-catalog/build";
-import type { ModelSpec } from "@oh-my-pi/pi-catalog/types";
 import type {
 	ExtensionAPI,
 	ProviderModelConfig,
@@ -381,24 +379,120 @@ export function wrapQoderFetch(
 	};
 }
 
+export const QODER_OPENAI_COMPAT: Model<"openai-completions">["compat"] = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsMultipleSystemMessages: false,
+	supportsReasoningEffort: true,
+	supportsReasoningParams: true,
+	supportsSamplingParams: true,
+	reasoningEffortMap: {},
+	supportsUsageInStreaming: true,
+	enableGeminiThinkingLoopGuard: false,
+	alwaysSendMaxTokens: false,
+	disableReasoningOnForcedToolChoice: false,
+	disableReasoningOnToolChoice: false,
+	supportsToolChoice: true,
+	supportsForcedToolChoice: true,
+	supportsNamedToolChoice: true,
+	maxTokensField: "max_completion_tokens",
+	requiresToolResultName: false,
+	requiresAssistantAfterToolResult: false,
+	requiresThinkingAsText: false,
+	requiresMistralToolIds: false,
+	thinkingFormat: "openai",
+	reasoningDisableMode: "lowest-effort",
+	omitReasoningEffort: false,
+	includeEncryptedReasoning: true,
+	filterReasoningHistory: false,
+	reasoningContentField: "reasoning_content",
+	requiresReasoningContentForToolCalls: false,
+	requiresReasoningContentForAllAssistantTurns: false,
+	allowsSyntheticReasoningContentForToolCalls: true,
+	replayReasoningContent: false,
+	qwenPreserveThinking: false,
+	requiresAssistantContentForToolCalls: false,
+	isOpenRouterHost: false,
+	wireModelIdMode: "raw",
+	isVercelGatewayHost: false,
+	supportsStrictMode: false,
+	toolStrictMode: "mixed",
+	stripDeepseekSpecialTokens: false,
+	streamMarkupHealingPattern: "thinking",
+	reasoningDeltasMayBeCumulative: false,
+	emptyLengthFinishIsContextError: false,
+	usesOpenAIToolCallIdLimit: false,
+	dropThinkingWhenReasoningEffort: false,
+};
+type QoderOpenAICompatConfig = Partial<
+	Pick<
+		Model<"openai-completions">["compat"],
+		| "allowsSyntheticReasoningContentForToolCalls"
+		| "disableReasoningOnToolChoice"
+		| "extraBody"
+		| "omitReasoningEffort"
+		| "supportsReasoningEffort"
+		| "requiresReasoningContentForAllAssistantTurns"
+		| "requiresReasoningContentForToolCalls"
+		| "supportsMultipleSystemMessages"
+		| "supportsStore"
+	>
+>;
+const QODER_OPENAI_COMPAT_OVERRIDES: Readonly<
+	Record<string, QoderOpenAICompatConfig>
+> = {
+	qmodel_preview: {
+		supportsReasoningEffort: false,
+		omitReasoningEffort: true,
+	},
+	dmodel: {
+		supportsMultipleSystemMessages: true,
+		disableReasoningOnToolChoice: true,
+		requiresReasoningContentForToolCalls: true,
+		requiresReasoningContentForAllAssistantTurns: true,
+		allowsSyntheticReasoningContentForToolCalls: false,
+	},
+	dfmodel: {
+		supportsMultipleSystemMessages: true,
+		disableReasoningOnToolChoice: true,
+		requiresReasoningContentForToolCalls: true,
+		requiresReasoningContentForAllAssistantTurns: true,
+		allowsSyntheticReasoningContentForToolCalls: false,
+	},
+};
+
+export function resolveQoderOpenAICompat(
+	wireModelId: string,
+	config: QoderOpenAICompatConfig | undefined,
+): Model<"openai-completions">["compat"] {
+	return {
+		...QODER_OPENAI_COMPAT,
+		...QODER_OPENAI_COMPAT_OVERRIDES[wireModelId],
+		...config,
+	};
+}
+
 /**
  * Rebuild the extension-registered model as a stock openai-completions model.
  * omp finalizes custom-API models without a resolved compat record and (on
  * versions before the extension contract carried it) drops `requestModelId`,
  * so the adapter re-attaches both from the plugin's own catalog before
- * delegating — idempotent once omp threads the field itself.
+ * delegating. The resolved compat defaults are local because marketplace
+ * packages cannot resolve pi-catalog from the host.
  */
 function toOpenAICompletionsModel(
 	model: Model<Api>,
 	requestModelId: string | undefined,
 ): Model<"openai-completions"> {
-	const spec = {
+	const compatConfig = model.compatConfig as
+		| QoderOpenAICompatConfig
+		| undefined;
+	return {
 		...model,
 		api: "openai-completions",
 		...(requestModelId !== undefined ? { requestModelId } : {}),
-		compat: model.compatConfig as ModelSpec<"openai-completions">["compat"],
-	} as ModelSpec<"openai-completions">;
-	return buildModel(spec);
+		compat: resolveQoderOpenAICompat(requestModelId ?? model.id, compatConfig),
+	} as Model<"openai-completions">;
 }
 
 /**
