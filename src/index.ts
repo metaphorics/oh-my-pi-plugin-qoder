@@ -228,13 +228,9 @@ const QODER_MODEL_INDEX: Record<string, QoderModelConfig> = Object.fromEntries(
 	QODER_MODELS.map((model) => [model.id, model]),
 );
 
-/**
- * Qoder's high-speed switch exists only on `kmodel` (Kimi-K2.7-Code). The
- * hyphenated alias shape is accepted for forward compatibility; underscore
- * New-family ids such as `kmodel_latest` never match.
- */
+/** Qoder's high-speed switch exists only on `kmodel` (Kimi-K2.7-Code). */
 export function isQoderFastModel(id: string): boolean {
-	return id === "kmodel" || id.startsWith("kmodel-");
+	return id === "kmodel";
 }
 
 // ---------------------------------------------------------------------------

@@ -267,11 +267,10 @@ describe("Qoder model catalog", () => {
 });
 
 describe("isQoderFastModel", () => {
-	it("matches only kmodel and its hyphenated alias shape", () => {
+	it("matches only kmodel", () => {
 		expect(isQoderFastModel("kmodel")).toBe(true);
-		expect(isQoderFastModel("kmodel-256k")).toBe(true);
+		expect(isQoderFastModel("kmodel-256k")).toBe(false);
 		expect(isQoderFastModel("kmodel_latest")).toBe(false);
-		expect(isQoderFastModel("kmodel_latest-400k")).toBe(false);
 		expect(isQoderFastModel("auto")).toBe(false);
 		expect(isQoderFastModel("ultimate")).toBe(false);
 	});
