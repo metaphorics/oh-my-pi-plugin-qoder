@@ -171,6 +171,7 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	expect(result.headers).toMatchObject({
 		"Cosy-ClientType": "5",
 		"Cosy-Version": "1.1.2",
+		"Cosy-Data-Policy": "disagree",
 	});
 	expect(result.handlerIdentitiesMatch).toBe(true);
 	expect(result.apiKey).toBe("access-token");
@@ -189,6 +190,7 @@ test.skipIf(!wasmBridgeAvailable)(
 		expect(result.headers).toMatchObject({
 			"Cosy-ClientType": "5",
 			"Cosy-Version": "1.1.2",
+			"Cosy-Data-Policy": "disagree",
 		});
 		expect(result.api3Ids?.length).toBe(18);
 		expect(result.modelCount).toBe(37);

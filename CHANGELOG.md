@@ -6,6 +6,7 @@
 
 - api3 WASM-signed transport restoring the six families pruned in 0.2.4 — Cantus (`cmodel`), Qwen3.8-Max-Preview (`qmodel_preview`), Qwen3.7-Max (`qmodel_latest`), Kimi-K3 (`kmodel_latest`), GLM-5.2 (`gm51model`), and DeepSeek-V4-Flash (`dfmodel`) — with their context aliases. The catalog returns to 15 base models plus 22 long-context aliases (37 rows).
 - Runtime catalog overlay: the server model list, fetched through the WASM-signed transport, refines reasoning-effort ladders and context windows (and the alias set) on top of the static defaults; a failed or missing overlay leaves the static defaults intact.
+- Privacy Mode enforced per request on both transports: every request carries `Cosy-Data-Policy: disagree` (the official client's opt-out wire value) — as a legacy api2-v2 header and inside the WASM-signed api3 header set.
 
 ### Changed
 

@@ -17,6 +17,7 @@ import {
 	streamQoderSimple,
 	wrapQoderFetch,
 } from "../src/index.js";
+import { QODER_PRIVATE_DATA_POLICY } from "../src/qoder-wasm.js";
 
 const FOLDED_SSE = [
 	'data: {"choices"',
@@ -183,6 +184,40 @@ describe("Qoder stream adapter", () => {
 		]) {
 			expect(request?.body[key], key).toBeUndefined();
 		}
+	});
+
+	it("carries the enforced Cosy-Data-Policy privacy header on api2-v2 requests", async () => {
+		// The shared privacy constant is what registration puts in the provider
+		// headers (pinned against the literal in index.test.ts); omp merges those
+		// into each model's `headers` at dispatch, and pi-ai merges model.headers
+		// into every request — this turn mirrors that dispatch end to end.
+		expect(QODER_PRIVATE_DATA_POLICY).toBe("disagree");
+
+		const model: Model<Api> = {
+			...runtimeModel("auto"),
+			headers: { "Cosy-Data-Policy": QODER_PRIVATE_DATA_POLICY },
+		};
+		const { fetchImpl, requests } = captureFetch(() =>
+			sseResponse(WELL_FORMED_SSE),
+		);
+		const events: string[] = [];
+		const stream = streamQoderSimple(model, userContext(), {
+			apiKey: "qoder-test-token",
+			fetch: fetchImpl,
+		});
+		for await (const event of stream) events.push(event.type);
+		const result = await stream.result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(events).toContain("done");
+		const request = requests[0];
+		expect(request?.url).toBe(
+			"https://api2-v2.qoder.sh/model/v1/chat/completions",
+		);
+		expect(request?.headers.get("Cosy-Data-Policy")).toBe("disagree");
+		// Enforcement is the header; the legacy body stays free of privacy fields.
+		expect(request?.body.data_policy_agreed).toBeUndefined();
+		expect(request?.body.privacy_mode).toBeUndefined();
 	});
 
 	it("repairs a fold split across network chunks", async () => {

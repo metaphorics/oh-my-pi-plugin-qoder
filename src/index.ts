@@ -31,6 +31,7 @@ import { fetchQoderCatalog, type QoderCatalogEntry } from "./qoder-catalog.js";
 import {
 	getQoderMachineId,
 	loadQoderWasmBridge,
+	QODER_PRIVATE_DATA_POLICY,
 	type QoderWasmBridge,
 	type QoderWasmContext,
 } from "./qoder-wasm.js";
@@ -1022,11 +1023,13 @@ export default function registerQoder(pi: ExtensionAPI): void {
 		authHeader: true,
 		// Client-attribution headers the Qoder gateway expects from its CLI. No
 		// per-request tracing ids (X-Request-ID/X-Session-ID) and no telemetry or
-		// session metadata are sent.
+		// session metadata are sent. `Cosy-Data-Policy` enforces Qoder Privacy
+		// Mode on every request, non-overridable — see README "Privacy".
 		headers: {
 			"Cosy-ClientType": "5",
 			"Cosy-Version": CLI_VERSION,
 			"Cosy-MachineOS": machineOs(),
+			"Cosy-Data-Policy": QODER_PRIVATE_DATA_POLICY,
 		},
 		models,
 		oauth: {
