@@ -1,12 +1,14 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type {
 	Api,
+	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
 	FetchImpl,
 	Model,
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
+import { createAssistantMessageEventStream } from "@oh-my-pi/pi-ai";
 import * as AIError from "@oh-my-pi/pi-ai/error";
 import type {
 	OAuthCredentials,
@@ -16,8 +18,22 @@ import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { streamOpenAICompletions } from "@oh-my-pi/pi-ai/providers/openai-completions";
 import type {
 	ExtensionAPI,
+	ProviderConfig,
 	ProviderModelConfig,
 } from "@oh-my-pi/pi-coding-agent";
+import {
+	createQoderApi3Transport,
+	QODER_API3_BASE,
+	type QoderApi3ModelRoute,
+	type QoderApi3Transport,
+} from "./qoder-api3.js";
+import { fetchQoderCatalog, type QoderCatalogEntry } from "./qoder-catalog.js";
+import {
+	getQoderMachineId,
+	loadQoderWasmBridge,
+	type QoderWasmBridge,
+	type QoderWasmContext,
+} from "./qoder-wasm.js";
 
 export const PROVIDER_ID = "qoder";
 export const CLI_VERSION = "1.1.2";
@@ -43,22 +59,26 @@ const QODER_MAX_OUTPUT_TOKENS = 32_768;
 // ---------------------------------------------------------------------------
 // Model catalog
 //
-// Static seed reverse-engineered from an authenticated `qodercli --list-models`
-// (the account catalog endpoint is wasm-signed, so dynamic discovery is out of
-// scope), pruned to the nine base wire keys the legacy api2-v2 transport
-// actually serves: live probing returns empty completions for the six
-// api3-only families (Cantus, Qwen3.8-Max-Preview, Qwen3.7-Max, Kimi-K3,
-// GLM-5.2, DeepSeek-V4-Flash), which require Qoder's WASM-signed transport.
-// The five multi-window models also get `-400k`/`-1m` local aliases that pin
-// `requestModelId` to the base wire key and send a top-level `context_length`
-// matching the alias window. `auto`, `efficient`, and `lite` are 180k-only;
-// `kmodel` is 256k-only — no aliases.
+// Static seed reverse-engineered from an authenticated `qodercli --list-models`,
+// now covering all fifteen base wire keys. Nine are served by the legacy
+// api2-v2 transport; the six api3-only families (Cantus, Qwen3.8-Max-Preview,
+// Qwen3.7-Max, Kimi-K3, GLM-5.2, DeepSeek-V4-Flash) require Qoder's
+// WASM-signed api3 transport and are marked `api3: true` — when the auth WASM
+// cannot be located/instantiated (qodercli not installed), they are filtered
+// out at registration and the plugin behaves exactly as the legacy nine-model
+// build. A lazy server-catalog overlay refreshes ladders, windows, and the
+// alias set once the first api3 turn succeeds; on any failure the static
+// specs stand. The eleven multi-window models also get `-400k`/`-1m` local
+// aliases that pin `requestModelId` to the base wire key; `auto`, `efficient`,
+// and `lite` are 180k-only; `kmodel` is 256k-only — no aliases.
 // ---------------------------------------------------------------------------
 
 /** ProviderModelConfig plus the alias wire-key carrier (added to omp's extension contract). */
 export interface QoderModelConfig extends ProviderModelConfig {
 	/** Base wire key for local context aliases; absent on base rows. */
 	requestModelId?: string;
+	/** Requires the WASM-signed api3 transport; filtered out when the bridge is unavailable. */
+	api3?: boolean;
 }
 
 type QoderThinking = NonNullable<ProviderModelConfig["thinking"]>;
@@ -90,6 +110,8 @@ interface QoderBaseSpec {
 	vision?: boolean;
 	/** Multi-window models get `-400k` and `-1m` context aliases. */
 	multiWindow?: boolean;
+	/** Served only by the WASM-signed api3 transport. */
+	api3?: boolean;
 }
 
 const QODER_BASE_SPECS: readonly QoderBaseSpec[] = [
@@ -132,6 +154,59 @@ const QODER_BASE_SPECS: readonly QoderBaseSpec[] = [
 		contextWindow: 200_000,
 		multiWindow: true,
 	},
+	// api3-only families: served exclusively through Qoder's WASM-signed
+	// transport. Static ladders are the pre-prune defaults; the lazy server
+	// catalog overlay refines them.
+	{
+		id: "cmodel",
+		name: "Cantus",
+		contextWindow: 200_000,
+		reasoning: true,
+		thinking: effortThinking(EFFORT_LADDER_LOW_TO_MAX, "high"),
+		multiWindow: true,
+		api3: true,
+	},
+	{
+		id: "qmodel_preview",
+		name: "Qwen3.8-Max-Preview",
+		contextWindow: 200_000,
+		reasoning: true,
+		thinking: effortThinking(["high"], "high", true),
+		multiWindow: true,
+		api3: true,
+	},
+	{
+		id: "qmodel_latest",
+		name: "Qwen3.7-Max",
+		contextWindow: 200_000,
+		multiWindow: true,
+		api3: true,
+	},
+	{
+		id: "kmodel_latest",
+		name: "Kimi-K3",
+		contextWindow: 200_000,
+		multiWindow: true,
+		api3: true,
+	},
+	{
+		id: "gm51model",
+		name: "GLM-5.2",
+		contextWindow: 200_000,
+		reasoning: true,
+		thinking: effortThinking(EFFORT_LADDER_HIGH_TO_MAX, "max"),
+		multiWindow: true,
+		api3: true,
+	},
+	{
+		id: "dfmodel",
+		name: "DeepSeek-V4-Flash",
+		contextWindow: 200_000,
+		reasoning: true,
+		thinking: effortThinking(EFFORT_LADDER_HIGH_TO_MAX, "max"),
+		multiWindow: true,
+		api3: true,
+	},
 ];
 
 const CONTEXT_ALIAS_WINDOWS = [
@@ -139,23 +214,47 @@ const CONTEXT_ALIAS_WINDOWS = [
 	{ suffix: "1m", label: "1M", contextWindow: 1_000_000 },
 ] as const;
 
-function buildQoderModels(): QoderModelConfig[] {
+/** Effective per-spec fields a catalog row is built from (static or catalog-overlaid). */
+interface QoderRowSpec {
+	reasoning: boolean;
+	vision: boolean;
+	contextWindow: number;
+	thinking: QoderThinking | undefined;
+	aliasWindows: readonly (typeof CONTEXT_ALIAS_WINDOWS)[number][];
+}
+
+function staticRowSpec(spec: QoderBaseSpec): QoderRowSpec {
+	return {
+		reasoning: spec.reasoning ?? false,
+		vision: spec.vision !== false,
+		contextWindow: spec.contextWindow,
+		thinking: spec.thinking,
+		aliasWindows: spec.multiWindow === true ? [...CONTEXT_ALIAS_WINDOWS] : [],
+	};
+}
+
+function buildQoderModelRows(
+	resolveSpec: (spec: QoderBaseSpec) => QoderRowSpec,
+): QoderModelConfig[] {
 	const models: QoderModelConfig[] = [];
 	for (const spec of QODER_BASE_SPECS) {
+		const resolved = resolveSpec(spec);
 		const base: QoderModelConfig = {
 			id: spec.id,
 			name: spec.name,
-			reasoning: spec.reasoning ?? false,
-			...(spec.thinking !== undefined ? { thinking: spec.thinking } : {}),
-			input: spec.vision === false ? ["text"] : ["text", "image"],
+			reasoning: resolved.reasoning,
+			...(resolved.thinking !== undefined
+				? { thinking: resolved.thinking }
+				: {}),
+			input: resolved.vision ? ["text", "image"] : ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			compat: { supportsStore: false },
-			contextWindow: spec.contextWindow,
+			contextWindow: resolved.contextWindow,
 			maxTokens: QODER_MAX_OUTPUT_TOKENS,
+			...(spec.api3 === true ? { api3: true } : {}),
 		};
 		models.push(base);
-		if (spec.multiWindow !== true) continue;
-		for (const window of CONTEXT_ALIAS_WINDOWS) {
+		for (const window of resolved.aliasWindows) {
 			models.push({
 				...base,
 				id: `${spec.id}-${window.suffix}`,
@@ -172,8 +271,12 @@ function buildQoderModels(): QoderModelConfig[] {
 	return models;
 }
 
-/** All 19 registered rows: 9 base models + 10 context aliases. */
-export const QODER_MODELS: readonly QoderModelConfig[] = buildQoderModels();
+/**
+ * All 37 catalog rows: 15 base models + 22 context aliases. The six api3-only
+ * families are filtered out at registration when the auth WASM is unavailable.
+ */
+export const QODER_MODELS: readonly QoderModelConfig[] =
+	buildQoderModelRows(staticRowSpec);
 
 const QODER_MODEL_INDEX: Record<string, QoderModelConfig> = Object.fromEntries(
 	QODER_MODELS.map((model) => [model.id, model]),
@@ -182,6 +285,212 @@ const QODER_MODEL_INDEX: Record<string, QoderModelConfig> = Object.fromEntries(
 /** Qoder's high-speed switch exists only on `kmodel` (Kimi-K2.7-Code). */
 export function isQoderFastModel(id: string): boolean {
 	return id === "kmodel";
+}
+
+// ---------------------------------------------------------------------------
+// api3 transport: lazy WASM bridge/transport, plus the live-catalog overlay
+// ---------------------------------------------------------------------------
+
+/**
+ * The auth WASM bridge, loaded lazily and synchronously (the plugin's
+ * registration path is sync). `undefined` = not attempted yet; `null` = no
+ * usable module — api3-only models are then never registered.
+ */
+let api3Bridge: QoderWasmBridge | null | undefined;
+
+/** The auth WASM bridge, or null when no known-good module is available. */
+export function getQoderApi3Bridge(): QoderWasmBridge | null {
+	if (api3Bridge === undefined) api3Bridge = loadQoderWasmBridge();
+	return api3Bridge;
+}
+
+let api3Transport: QoderApi3Transport | null | undefined;
+
+function getQoderApi3Transport(): QoderApi3Transport | null {
+	if (api3Transport !== undefined) return api3Transport;
+	const bridge = getQoderApi3Bridge();
+	api3Transport =
+		bridge === null
+			? null
+			: createQoderApi3Transport({
+					bridge,
+					machineId: getQoderMachineId(),
+					openapiBase: OPENAPI_BASE,
+					api3Base: QODER_API3_BASE,
+					cosyVersion: CLI_VERSION,
+					clientName: "omp",
+					repair: repairQoderSseBody,
+					onContext: handleApi3CatalogContext,
+				});
+	return api3Transport;
+}
+
+/** Base rows' current context windows (static until the catalog overlay lands). */
+const effectiveBaseContextWindows = new Map<string, number>(
+	QODER_BASE_SPECS.map((spec) => [spec.id, spec.contextWindow]),
+);
+
+function buildApi3Route(
+	model: Model<Api>,
+	wireId: string,
+	requestModelId: string | undefined,
+): QoderApi3ModelRoute {
+	const baseRow = QODER_MODEL_INDEX[wireId];
+	const thinking = model.thinking;
+	return {
+		wireId,
+		displayName: baseRow?.name ?? model.name,
+		contextWindow: model.contextWindow ?? baseRow?.contextWindow ?? 200_000,
+		maxInputTokens:
+			effectiveBaseContextWindows.get(wireId) ?? model.contextWindow ?? 200_000,
+		isReasoning: model.reasoning,
+		isVl: model.input.includes("image"),
+		efforts: thinking?.efforts.map(String) ?? [],
+		defaultEffort:
+			thinking?.defaultLevel !== undefined
+				? String(thinking.defaultLevel)
+				: undefined,
+		requiresEffort: thinking?.requiresEffort === true,
+		openaiModel: toOpenAICompletionsModel(model, requestModelId),
+	};
+}
+
+/** Honest failure when an api3 model is addressed without a usable bridge. */
+function streamApi3Unavailable(model: Model<Api>): AssistantMessageEventStream {
+	const stream = createAssistantMessageEventStream();
+	const output: AssistantMessage = {
+		role: "assistant",
+		content: [],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "error",
+		errorMessage:
+			"Qoder api3 models need qodercli installed (its auth module signs api3 requests)",
+		timestamp: Date.now(),
+	};
+	stream.push({ type: "start", partial: output });
+	stream.push({ type: "error", reason: "error", error: output });
+	stream.end();
+	return stream;
+}
+
+// ---------------------------------------------------------------------------
+// Live-catalog overlay: refresh the static ladders/windows from the server
+// ---------------------------------------------------------------------------
+
+interface RegisteredProviderState {
+	pi: ExtensionAPI;
+	config: ProviderConfig;
+}
+
+let registeredProvider: RegisteredProviderState | null = null;
+
+const CATALOG_REFRESH_MS = 30_000;
+let catalogFetchedAt = 0;
+let catalogInFlight = false;
+let overlayFingerprint = "";
+
+/**
+ * Lazy catalog refresh: fired by the api3 transport when a fresh WASM context
+ * exists (i.e. after the first authenticated api3 turn). Fetches the live
+ * model list at most once per 30 s; any failure leaves the static catalog.
+ */
+function handleApi3CatalogContext(
+	ctx: QoderWasmContext,
+	fetchImpl: FetchImpl | undefined,
+): void {
+	if (registeredProvider === null || catalogInFlight) return;
+	const now = Date.now();
+	if (now - catalogFetchedAt < CATALOG_REFRESH_MS) return;
+	catalogFetchedAt = now;
+	catalogInFlight = true;
+	void fetchQoderCatalog(ctx, QODER_API3_BASE, fetchImpl)
+		.then((entries) => {
+			if (entries !== null) applyQoderCatalogOverlay(entries);
+		})
+		.catch(() => {})
+		.finally(() => {
+			catalogInFlight = false;
+		});
+}
+
+/** Overlay one spec with server truth; never downgrade a static field on a missing server field. */
+function overlaidRowSpec(
+	spec: QoderBaseSpec,
+	entry: QoderCatalogEntry | undefined,
+): QoderRowSpec {
+	const reasoning = entry?.isReasoning ?? spec.reasoning ?? false;
+	const staticSpec = staticRowSpec(spec);
+	let thinking: QoderThinking | undefined;
+	if (reasoning) {
+		const staticEfforts = spec.thinking?.efforts.map(String) ?? [];
+		const efforts =
+			entry?.efforts !== undefined && entry.efforts.length > 0
+				? entry.efforts
+				: staticEfforts;
+		if (efforts.length > 0) {
+			const staticDefault =
+				spec.thinking?.defaultLevel !== undefined
+					? String(spec.thinking.defaultLevel)
+					: undefined;
+			const defaultEffort =
+				entry?.defaultEffort !== undefined &&
+				efforts.includes(entry.defaultEffort)
+					? entry.defaultEffort
+					: staticDefault !== undefined && efforts.includes(staticDefault)
+						? staticDefault
+						: efforts[efforts.length - 1];
+			thinking = effortThinking(
+				efforts,
+				defaultEffort,
+				spec.thinking?.requiresEffort === true,
+			);
+		} else {
+			thinking = spec.thinking;
+		}
+	}
+	return {
+		reasoning,
+		vision: entry?.isVl ?? staticSpec.vision,
+		contextWindow: entry?.maxInputTokens ?? staticSpec.contextWindow,
+		thinking,
+		aliasWindows:
+			entry?.contextWindows !== undefined
+				? CONTEXT_ALIAS_WINDOWS.filter((window) =>
+						entry.contextWindows?.includes(window.contextWindow),
+					)
+				: staticSpec.aliasWindows,
+	};
+}
+
+function applyQoderCatalogOverlay(
+	entries: ReadonlyMap<string, QoderCatalogEntry>,
+): void {
+	if (registeredProvider === null) return;
+	const overlaid = buildQoderModelRows((spec) =>
+		overlaidRowSpec(spec, entries.get(spec.id)),
+	).filter((row) => row.api3 !== true || getQoderApi3Bridge() !== null);
+	const fingerprint = JSON.stringify(overlaid);
+	if (fingerprint === overlayFingerprint) return;
+	overlayFingerprint = fingerprint;
+	for (const row of overlaid) {
+		if (row.requestModelId === undefined) {
+			effectiveBaseContextWindows.set(row.id, row.contextWindow);
+		}
+	}
+	registeredProvider.pi.registerProvider(PROVIDER_ID, {
+		...registeredProvider.config,
+		models: overlaid,
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +708,15 @@ const QODER_OPENAI_COMPAT_OVERRIDES: Readonly<
 		requiresReasoningContentForAllAssistantTurns: true,
 		allowsSyntheticReasoningContentForToolCalls: false,
 	},
+	// DeepSeek-V4 family quirks, mirrored from dmodel (buildModel applies the
+	// same detection defaults to DeepSeek-named rows).
+	dfmodel: {
+		supportsMultipleSystemMessages: true,
+		disableReasoningOnToolChoice: true,
+		requiresReasoningContentForToolCalls: true,
+		requiresReasoningContentForAllAssistantTurns: true,
+		allowsSyntheticReasoningContentForToolCalls: false,
+	},
 };
 
 export function resolveQoderOpenAICompat(
@@ -449,9 +767,22 @@ export function streamQoderSimple(
 ): AssistantMessageEventStream {
 	const requestModelId =
 		model.requestModelId ?? QODER_MODEL_INDEX[model.id]?.requestModelId;
+	const wireId = requestModelId ?? model.id;
+	if (QODER_MODEL_INDEX[wireId]?.api3 === true) {
+		// api3-only family: route through the WASM-signed transport. The bridge
+		// is guaranteed at registration (api3 rows are filtered out without
+		// it); the fallback covers direct adapter calls in tests/tools.
+		const transport = getQoderApi3Transport();
+		if (transport === null) return streamApi3Unavailable(model);
+		return transport.stream(
+			buildApi3Route(model, wireId, requestModelId),
+			model,
+			context,
+			options,
+		);
+	}
 	const highspeed =
-		options?.serviceTier === "priority" &&
-		isQoderFastModel(requestModelId ?? model.id);
+		options?.serviceTier === "priority" && isQoderFastModel(wireId);
 	return streamOpenAICompletions(
 		toOpenAICompletionsModel(model, requestModelId),
 		context,
@@ -677,7 +1008,13 @@ export default function registerQoder(pi: ExtensionAPI): void {
 		);
 		return;
 	}
-	pi.registerProvider(PROVIDER_ID, {
+	// api3-only models require the auth WASM; without it they are not
+	// registered and the plugin behaves exactly as the legacy nine-model build.
+	const bridge = getQoderApi3Bridge();
+	const models = QODER_MODELS.filter(
+		(row) => row.api3 !== true || bridge !== null,
+	);
+	const config: ProviderConfig = {
 		baseUrl: MODEL_BASE,
 		api: QODER_API_ID,
 		streamSimple: streamQoderSimple,
@@ -685,18 +1022,20 @@ export default function registerQoder(pi: ExtensionAPI): void {
 		authHeader: true,
 		// Client-attribution headers the Qoder gateway expects from its CLI. No
 		// per-request tracing ids (X-Request-ID/X-Session-ID) and no telemetry or
-		// session metadata are sent — see README "Privacy".
+		// session metadata are sent.
 		headers: {
 			"Cosy-ClientType": "5",
 			"Cosy-Version": CLI_VERSION,
 			"Cosy-MachineOS": machineOs(),
 		},
-		models: [...QODER_MODELS],
+		models,
 		oauth: {
 			name: "Qoder",
 			login: loginQoder,
 			refreshToken: refreshQoderToken,
 			getApiKey: (credentials) => credentials.access,
 		},
-	});
+	};
+	registeredProvider = { pi, config };
+	pi.registerProvider(PROVIDER_ID, config);
 }

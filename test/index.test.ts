@@ -1,4 +1,11 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getQoderApi3Bridge } from "../src/index.js";
+
+/** Whether this machine has a usable qodercli auth WASM (drives the 37-row test's skip). */
+const wasmBridgeAvailable = getQoderApi3Bridge() !== null;
 
 interface ChildResult {
 	initialCollision: boolean;
@@ -10,6 +17,8 @@ interface ChildResult {
 	hasStreamSimple: boolean;
 	modelCount: number | undefined;
 	modelId: string | undefined;
+	modelIds: string[] | undefined;
+	api3Ids: string[] | undefined;
 	supportsStore: boolean | undefined;
 	headers: Record<string, string> | undefined;
 	handlerIdentitiesMatch: boolean;
@@ -68,6 +77,8 @@ process.stdout.write(JSON.stringify({
   hasStreamSimple: typeof config?.streamSimple === "function",
   modelCount: config?.models?.length,
   modelId: config?.models?.[0]?.id,
+  modelIds: config?.models?.map((model) => model.id),
+  api3Ids: config?.models?.filter((model) => model.api3 === true).map((model) => model.id),
   supportsStore: config?.models?.[0]?.compat?.supportsStore,
   headers: config?.headers,
   handlerIdentitiesMatch,
@@ -77,9 +88,10 @@ process.stdout.write(JSON.stringify({
 }));
 `;
 
-test("registers the Qoder contract and skips a native-provider collision", async () => {
+async function runChild(env: Record<string, string>): Promise<ChildResult> {
 	const child = Bun.spawn([process.execPath, "--eval", childScript], {
 		cwd: `${import.meta.dir}/..`,
+		env,
 		stdout: "pipe",
 		stderr: "pipe",
 	});
@@ -89,7 +101,41 @@ test("registers the Qoder contract and skips a native-provider collision", async
 		child.exited,
 	]);
 	expect(exitCode, stderr).toBe(0);
-	const result = JSON.parse(stdout) as ChildResult;
+	return JSON.parse(stdout) as ChildResult;
+}
+
+/**
+ * Environment that makes every WASM candidate unresolvable: an explicit
+ * override path that does not exist, a sandboxed HOME (hides the installed
+ * `~/.qoder` CLI), and a sandboxed XDG cache (hides the verified-module
+ * cache). The loader then fails closed and api3 rows are filtered out.
+ * Returns the env plus a cleanup that removes the sandbox.
+ */
+function bridgeMissingEnv(): {
+	env: Record<string, string>;
+	cleanup: () => void;
+} {
+	const sandbox = mkdtempSync(join(tmpdir(), "qoder-no-wasm-"));
+	return {
+		env: {
+			...process.env,
+			HOME: sandbox,
+			XDG_CACHE_HOME: join(sandbox, "xdg-cache"),
+			QODER_HOME: join(sandbox, "qoder-home"),
+			QODER_WASM_PATH: join(sandbox, "missing.wasm"),
+		} as Record<string, string>,
+		cleanup: () => rmSync(sandbox, { recursive: true, force: true }),
+	};
+}
+
+test("registers the legacy 19-row contract without a WASM bridge and skips a native-provider collision", async () => {
+	const { env, cleanup } = bridgeMissingEnv();
+	let result: ChildResult;
+	try {
+		result = await runChild(env);
+	} finally {
+		cleanup();
+	}
 	expect(result.initialCollision).toBe(false);
 	expect(result.registrationCount).toBe(1);
 	expect(result.registeredProvider).toBe("qoder");
@@ -99,6 +145,28 @@ test("registers the Qoder contract and skips a native-provider collision", async
 	expect(result.hasStreamSimple).toBe(true);
 	expect(result.modelCount).toBe(19);
 	expect(result.modelId).toBe("auto");
+	expect(result.modelIds).toEqual([
+		"auto",
+		"ultimate",
+		"ultimate-400k",
+		"ultimate-1m",
+		"performance",
+		"performance-400k",
+		"performance-1m",
+		"efficient",
+		"lite",
+		"qmodel",
+		"qmodel-400k",
+		"qmodel-1m",
+		"kmodel",
+		"dmodel",
+		"dmodel-400k",
+		"dmodel-1m",
+		"mmodel",
+		"mmodel-400k",
+		"mmodel-1m",
+	]);
+	expect(result.api3Ids).toEqual([]);
 	expect(result.supportsStore).toBe(false);
 	expect(result.headers).toMatchObject({
 		"Cosy-ClientType": "5",
@@ -111,3 +179,32 @@ test("registers the Qoder contract and skips a native-provider collision", async
 		"Qoder provider is already available in omp; plugin registration skipped",
 	]);
 });
+
+test.skipIf(!wasmBridgeAvailable)(
+	"registers the full 37-row catalog when the auth WASM bridge is available",
+	async () => {
+		const result = await runChild({ ...process.env } as Record<string, string>);
+		expect(result.registrationCount).toBe(1);
+		expect(result.registeredProvider).toBe("qoder");
+		expect(result.headers).toMatchObject({
+			"Cosy-ClientType": "5",
+			"Cosy-Version": "1.1.2",
+		});
+		expect(result.api3Ids?.length).toBe(18);
+		expect(result.modelCount).toBe(37);
+		expect(result.modelIds?.[0]).toBe("auto");
+		for (const id of [
+			"cmodel",
+			"qmodel_preview",
+			"qmodel_latest",
+			"kmodel_latest",
+			"gm51model",
+			"dfmodel",
+		]) {
+			expect(result.api3Ids, id).toContain(id);
+			expect(result.api3Ids, `${id}-400k`).toContain(`${id}-400k`);
+			expect(result.api3Ids, `${id}-1m`).toContain(`${id}-1m`);
+		}
+		expect(result.modelIds).toContain("qmodel_preview-400k");
+	},
+);

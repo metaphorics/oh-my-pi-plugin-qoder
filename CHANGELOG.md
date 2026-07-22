@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0] - 2026-07-22
+
+### Added
+
+- api3 WASM-signed transport restoring the six families pruned in 0.2.4 — Cantus (`cmodel`), Qwen3.8-Max-Preview (`qmodel_preview`), Qwen3.7-Max (`qmodel_latest`), Kimi-K3 (`kmodel_latest`), GLM-5.2 (`gm51model`), and DeepSeek-V4-Flash (`dfmodel`) — with their context aliases. The catalog returns to 15 base models plus 22 long-context aliases (37 rows).
+- Runtime catalog overlay: the server model list, fetched through the WASM-signed transport, refines reasoning-effort ladders and context windows (and the alias set) on top of the static defaults; a failed or missing overlay leaves the static defaults intact.
+
+### Changed
+
+- The six api3 models register only when the installed `qodercli` auth WASM is available (located and extracted at runtime, verified against a known-good SHA-256 digest, never bundled); otherwise the plugin degrades to the 19 legacy rows (9 bases + 10 aliases).
+
 ## 0.2.4 - 2026-07-22
 
 - Aligned the client attribution with qodercli 1.1.2: `CLI_VERSION`, the `Cosy-Version` request header, and the token-refresh `User-Agent` now report 1.1.2.

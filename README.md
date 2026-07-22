@@ -1,6 +1,6 @@
 # Qoder provider for oh-my-pi
 
-An unofficial [oh-my-pi](https://github.com/can1357/oh-my-pi) extension that adds Qoder browser login and the legacy-supported Qoder model catalog: 9 base models plus 10 long-context aliases.
+An unofficial [oh-my-pi](https://github.com/can1357/oh-my-pi) extension that adds Qoder browser login and the Qoder model catalog: up to 15 base models plus 22 long-context aliases (37 rows). Six api3-only families register only when the installed Qoder CLI's auth WASM is available; without it the plugin degrades to the 19 legacy rows.
 
 ## Install
 
@@ -37,11 +37,17 @@ omp --model qoder/auto
 
 `QODER_PERSONAL_ACCESS_TOKEN` is not accepted as a bearer token. Qoder's CLI exchanges personal access tokens through a separate job-token endpoint; this plugin does not implement that flow.
 
+## Requirements
+
+The nine legacy models work with just a Qoder login; nothing else needs to be installed.
+
+The six api3 models additionally require Qoder's CLI (`qodercli` 1.1.2), installed either at `~/.qoder/bin/qodercli` or as `@qoder-ai/qodercli` under `node_modules`. The plugin locates the CLI's auth WASM at runtime, extracts it, verifies it against a known-good SHA-256 digest, and caches the verified module under the plugin cache directory; the WASM is never bundled with or redistributed by this plugin. If the WASM cannot be found or instantiated, the six api3 models and their aliases are not registered and the plugin serves the 19 legacy rows. `QODER_WASM_PATH` (a direct `.wasm` path) and `QODER_HOME` (the install root) override the search.
+
 ## Models
 
-The catalog is a static seed reverse-engineered from an authenticated `qodercli --list-models` (Qoder's model-list endpoint is request-signed, so dynamic discovery is not possible). Every model streams through Qoder's OpenAI-compatible endpoint and allows 32k output tokens.
+The catalog is a static seed reverse-engineered from an authenticated `qodercli --list-models`, overlaid at runtime with the server's model list (fetched through the same WASM-signed transport) when the auth WASM is available; the overlay refines reasoning-effort ladders and context windows and never downgrades the static defaults. The nine legacy models stream through Qoder's OpenAI-compatible api2-v2 endpoint; the six api3 families stream through Qoder's WASM-signed api3 transport. Every model allows 32k output tokens.
 
-Only the nine base models proven against the legacy api2-v2 endpoint are advertised. Six catalog families — Cantus (`cmodel`), Qwen3.8-Max-Preview (`qmodel_preview`), Qwen3.7-Max (`qmodel_latest`), Kimi-K3 (`kmodel_latest`), GLM-5.2 (`gm51model`), and DeepSeek-V4-Flash (`dfmodel`) — are served only by Qoder's WASM-signed api3 transport; the legacy endpoint accepts their requests but returns empty completions, so they were removed in 0.2.4 rather than silently failing.
+The nine legacy base models are always registered. The six families pruned in 0.2.4 — Cantus (`cmodel`), Qwen3.8-Max-Preview (`qmodel_preview`), Qwen3.7-Max (`qmodel_latest`), Kimi-K3 (`kmodel_latest`), GLM-5.2 (`gm51model`), and DeepSeek-V4-Flash (`dfmodel`) — are served only by Qoder's WASM-signed api3 transport (the legacy endpoint accepts their requests but returns empty completions). The plugin registers these six, with their 12 context aliases, only when it can locate and run the auth WASM from your installed `qodercli` (see Requirements). When the WASM is unavailable, the plugin degrades to the 19 legacy rows (9 bases + 10 aliases) and the six api3 families stay hidden rather than silently failing.
 
 | Model | Wire key | Context | Reasoning | Notes |
 |---|---|---|---:|---|
@@ -54,6 +60,12 @@ Only the nine base models proven against the legacy api2-v2 endpoint are adverti
 | Kimi-K2.7-Code | `kmodel` | 256k | no | Only model with the high-speed switch |
 | DeepSeek-V4-Pro | `dmodel` | 200k | yes | Efforts high/max, default max |
 | MiniMax-M3 | `mmodel` | 200k | no | |
+| Cantus | `cmodel` | 200k | yes | api3; efforts low–max, default high |
+| Qwen3.8-Max-Preview | `qmodel_preview` | 200k | yes | api3; effort high (required) |
+| Qwen3.7-Max | `qmodel_latest` | 200k | no | api3 |
+| Kimi-K3 | `kmodel_latest` | 200k | no | api3 |
+| GLM-5.2 | `gm51model` | 200k | yes | api3; efforts high/max, default max |
+| DeepSeek-V4-Flash | `dfmodel` | 200k | yes | api3; efforts high/max, default max |
 
 ### Context aliases
 
@@ -62,7 +74,7 @@ Every multi-window model (all of the above except `auto`, `efficient`, `lite`, a
 - `<wire-key>-400k` — 400,000-token context window
 - `<wire-key>-1m` — 1,000,000-token context window
 
-An alias sends the **base** wire key as the request `model` plus a top-level `context_length` matching the alias window (e.g. `qoder/ultimate-1m` sends `"model": "ultimate", "context_length": 1000000`). Aliases inherit the base model's reasoning, vision, and effort metadata.
+An alias routes the **base** wire key with the context window matching its suffix. On the legacy transport it sends the base key as the request `model` plus a top-level `context_length` (e.g. `qoder/ultimate-1m` sends `"model": "ultimate", "context_length": 1000000`); on the api3 transport the base key rides in `model_config.key` and the window in `parameters.context_length`. Aliases inherit the base model's reasoning, vision, and effort metadata.
 
 ## Fast mode (`/fast`)
 
@@ -76,7 +88,7 @@ OpenAI's `service_tier` field is never sent to Qoder. `/fast` on any other Qoder
 
 ## Privacy
 
-**Client behavior (what this plugin controls):** requests carry only `Authorization: Bearer`, the JSON/event-stream negotiation headers, and Qoder's three `Cosy-*` client-attribution headers (`Cosy-ClientType`, `Cosy-Version`, `Cosy-MachineOS`). The plugin deliberately omits the Qoder CLI's per-request tracing ids (`X-Request-ID`, `X-Session-ID`) and sends no `user`, `store`, telemetry, or session-metadata fields. High-speed metadata is sent only while `/fast` is active on `qoder/kmodel`, as documented above.
+**Client behavior (what this plugin controls):** legacy requests carry only `Authorization: Bearer`, the JSON/event-stream negotiation headers, and Qoder's three `Cosy-*` client-attribution headers (`Cosy-ClientType`, `Cosy-Version`, `Cosy-MachineOS`); api3 requests carry the WASM-signed `Cosy-*` auth set, whose signing context is built with `data_policy_agreed:false`. The plugin deliberately omits the Qoder CLI's per-request tracing ids (`X-Request-ID`, `X-Session-ID`) and sends no `user`, `store`, telemetry, or session-metadata fields. High-speed metadata is sent only while `/fast` is active on `qoder/kmodel`, as documented above.
 
 **Account policy (what this plugin cannot control):** Qoder's named Privacy Mode is an account-side setting (`data_policy_agreed`) guarded by a request-signed settings endpoint. There is no field for it on the OpenAI-compatible model endpoint, so this plugin cannot enable or disable it and does not fabricate one. Manage data contribution in your Qoder account's privacy settings; this plugin does not change your server-side policy.
 
@@ -85,15 +97,15 @@ OpenAI's `service_tier` field is never sent to Qoder. `/fast` on any other Qoder
 - Uses Qoder's browser PKCE device flow and refresh endpoint, retrying transient network errors while authorization is pending.
 - Sends the Qoder `Cosy-*` client headers required by the model gateway.
 - Repairs Qoder's folded SSE framing (a final usage event split across a bare newline) before parsing, so token accounting survives; other providers' streams are untouched.
-- Registers 19 models: 9 base rows + 10 context aliases wired through `requestModelId` and `context_length`.
+- Registers up to 37 models: 15 base rows + 22 context aliases wired through `requestModelId` and `context_length`; degrades to the 19 legacy rows (9 bases + 10 aliases) when the qodercli auth WASM is unavailable.
 - Omits OpenAI's unsupported `store` request field.
 - Becomes inert when omp already provides native Qoder support, including marketplace installs.
 
 ## Verification status
 
-Mocked network tests cover PKCE construction, pending polling, transient retry, token parsing, refresh requests, provider registration and collision handling, the 19-row model surface and alias metadata, folded-SSE usage recovery (including folds split across network chunks), alias wire routing with `context_length`, scoped high-speed injection, and the no-telemetry request posture. Package type checking is also exercised.
+Mocked network tests cover PKCE construction, pending polling, transient retry, token parsing, refresh requests, provider registration and collision handling, the legacy 19-row model surface and alias metadata, folded-SSE usage recovery (including folds split across network chunks), alias wire routing with `context_length`, scoped high-speed injection, and the no-telemetry request posture. Package type checking is also exercised.
 
-Browser authorization and real-account streamed chat were validated with `qoder/auto`, a long-context alias, and `/fast` on `qoder/kmodel`. Tool calls and token refresh have not been validated end to end. Qoder can change these undocumented endpoints without notice.
+Browser authorization and real-account streamed chat were validated with `qoder/auto`, a long-context alias, and `/fast` on `qoder/kmodel`. The WASM bridge (runtime locate, extract, SHA-256 verify, instantiate) and the WASM-signed api3 transport were validated live against a real account with the installed `qodercli` 1.1.2 WASM: all fifteen base models and spot-checked aliases (`ultimate-400k`, `qmodel_preview-400k`, `cmodel-1m`) streamed through compiled omp, including the six api3-only families; `Cosy-Data-Policy: disagree` was confirmed on every WASM-prepared request. The new api3/WASM/privacy paths are covered by mocked unit tests (body contract, identity chain, SSE-envelope mapping, error envelopes, folded-SSE repair, bridge-missing degradation). Token refresh has not been validated end to end. Qoder can change these undocumented endpoints without notice.
 
 ## Scope and affiliation
 

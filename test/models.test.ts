@@ -20,6 +20,12 @@ const BASE_IDS = [
 	"kmodel",
 	"dmodel",
 	"mmodel",
+	"cmodel",
+	"qmodel_preview",
+	"qmodel_latest",
+	"kmodel_latest",
+	"gm51model",
+	"dfmodel",
 ] as const;
 
 const ALIASED_IDS = [
@@ -28,10 +34,16 @@ const ALIASED_IDS = [
 	"qmodel",
 	"dmodel",
 	"mmodel",
+	"cmodel",
+	"qmodel_preview",
+	"qmodel_latest",
+	"kmodel_latest",
+	"gm51model",
+	"dfmodel",
 ] as const;
 
-/** Base wire IDs the legacy api2-v2 transport fails with empty completions. */
-const DROPPED_IDS = [
+/** Base wire IDs served exclusively by the WASM-signed api3 transport. */
+const API3_IDS = [
 	"cmodel",
 	"qmodel_preview",
 	"qmodel_latest",
@@ -60,22 +72,83 @@ function sparseCompat(model: QoderModelConfig): {
 }
 
 describe("Qoder model catalog", () => {
-	it("registers 9 base models and 10 context aliases with unique ids", () => {
-		expect(QODER_MODELS).toHaveLength(19);
-		expect(new Set(QODER_MODELS.map((model) => model.id)).size).toBe(19);
+	it("registers 15 base models and 22 context aliases with unique ids", () => {
+		expect(QODER_MODELS).toHaveLength(37);
+		expect(new Set(QODER_MODELS.map((model) => model.id)).size).toBe(37);
 		expect(
 			QODER_MODELS.filter((model) => model.requestModelId === undefined).map(
 				(model) => model.id,
 			),
 		).toEqual([...BASE_IDS]);
+		expect(
+			QODER_MODELS.filter((model) => model.requestModelId !== undefined),
+		).toHaveLength(22);
 	});
 
-	it("omits the base ids the legacy transport fails and their aliases", () => {
-		const ids = new Set(QODER_MODELS.map((model) => model.id));
-		for (const id of DROPPED_IDS) {
-			expect(ids.has(id), id).toBe(false);
-			expect(ids.has(`${id}-400k`), id).toBe(false);
-			expect(ids.has(`${id}-1m`), id).toBe(false);
+	it("flags the six api3-only families with their static effort ladders", () => {
+		const ladders: Record<
+			(typeof API3_IDS)[number],
+			{
+				efforts: string[];
+				defaultLevel: string;
+				requiresEffort?: boolean;
+			} | null
+		> = {
+			cmodel: {
+				efforts: ["low", "medium", "high", "xhigh", "max"],
+				defaultLevel: "high",
+			},
+			qmodel_preview: {
+				efforts: ["high"],
+				defaultLevel: "high",
+				requiresEffort: true,
+			},
+			qmodel_latest: null,
+			kmodel_latest: null,
+			gm51model: { efforts: ["high", "max"], defaultLevel: "max" },
+			dfmodel: { efforts: ["high", "max"], defaultLevel: "max" },
+		};
+		for (const id of API3_IDS) {
+			const base = byId(id);
+			expect(base.api3, id).toBe(true);
+			expect(base.requestModelId, id).toBeUndefined();
+			const ladder = ladders[id];
+			if (ladder === null) {
+				expect(base.reasoning, id).toBe(false);
+				expect(base.thinking, id).toBeUndefined();
+			} else {
+				expect(base.reasoning, id).toBe(true);
+				expect(base.thinking, id).toMatchObject({
+					mode: "effort",
+					efforts: ladder.efforts,
+					defaultLevel: ladder.defaultLevel,
+					...(ladder.requiresEffort === true ? { requiresEffort: true } : {}),
+				});
+			}
+			for (const suffix of ["400k", "1m"] as const) {
+				const alias = byId(`${id}-${suffix}`);
+				expect(alias.api3, alias.id).toBe(true);
+				expect(alias.requestModelId, alias.id).toBe(id);
+				expect(alias.reasoning, alias.id).toBe(base.reasoning);
+				expect(alias.thinking, alias.id).toEqual(base.thinking);
+			}
+		}
+		// Exactly the six families and their twelve aliases carry the api3 flag;
+		// the nine legacy families never do.
+		const expectedApi3Ids = API3_IDS.flatMap((id) => [
+			id,
+			`${id}-400k`,
+			`${id}-1m`,
+		]);
+		expect(
+			QODER_MODELS.filter((model) => model.api3 === true).map(
+				(model) => model.id,
+			),
+		).toEqual(expectedApi3Ids);
+		for (const model of QODER_MODELS) {
+			if (!expectedApi3Ids.includes(model.id)) {
+				expect(model.api3, model.id).toBeUndefined();
+			}
 		}
 	});
 
@@ -143,6 +216,42 @@ describe("Qoder model catalog", () => {
 				reasoning: false,
 				vision: true,
 			},
+			cmodel: {
+				name: "Cantus",
+				contextWindow: 200_000,
+				reasoning: true,
+				vision: true,
+			},
+			qmodel_preview: {
+				name: "Qwen3.8-Max-Preview",
+				contextWindow: 200_000,
+				reasoning: true,
+				vision: true,
+			},
+			qmodel_latest: {
+				name: "Qwen3.7-Max",
+				contextWindow: 200_000,
+				reasoning: false,
+				vision: true,
+			},
+			kmodel_latest: {
+				name: "Kimi-K3",
+				contextWindow: 200_000,
+				reasoning: false,
+				vision: true,
+			},
+			gm51model: {
+				name: "GLM-5.2",
+				contextWindow: 200_000,
+				reasoning: true,
+				vision: true,
+			},
+			dfmodel: {
+				name: "DeepSeek-V4-Flash",
+				contextWindow: 200_000,
+				reasoning: true,
+				vision: true,
+			},
 		};
 		for (const [id, want] of Object.entries(expected)) {
 			const model = byId(id);
@@ -179,12 +288,33 @@ describe("Qoder model catalog", () => {
 			efforts: ["high", "max"],
 			defaultLevel: "max",
 		});
+		expect(byId("cmodel").thinking).toMatchObject({
+			mode: "effort",
+			efforts: ["low", "medium", "high", "xhigh", "max"],
+			defaultLevel: "high",
+		});
+		expect(byId("qmodel_preview").thinking).toMatchObject({
+			mode: "effort",
+			efforts: ["high"],
+			defaultLevel: "high",
+			requiresEffort: true,
+		});
+		expect(byId("gm51model").thinking).toMatchObject({
+			mode: "effort",
+			efforts: ["high", "max"],
+			defaultLevel: "max",
+		});
+		expect(byId("dfmodel").thinking).toMatchObject({
+			mode: "effort",
+			efforts: ["high", "max"],
+			defaultLevel: "max",
+		});
 		for (const model of QODER_MODELS) {
 			if (!model.reasoning) expect(model.thinking, model.id).toBeUndefined();
 		}
 	});
 
-	it("derives -400k and -1m aliases for exactly the 5 multi-window models", () => {
+	it("derives -400k and -1m aliases for exactly the 11 multi-window models", () => {
 		for (const id of ALIASED_IDS) {
 			const base = byId(id);
 			for (const [suffix, label, contextWindow] of [
