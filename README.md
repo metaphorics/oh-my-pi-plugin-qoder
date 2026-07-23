@@ -13,7 +13,7 @@ Install through the repository's omp marketplace:
 
 Restart omp after installation.
 
-This compatibility provider supports omp 17.x starting with 17.0.6. Hosts in that line that bundle Qoder load the extension inert instead of overriding the native provider.
+This compatibility provider supports omp 17.x starting with 17.0.6. Hosts in that line that bundle Qoder skip duplicate provider registration while retaining the extension's automatic Ultimate claim.
 
 Direct Git installation is also supported:
 
@@ -27,6 +27,8 @@ omp plugin install https://github.com/metaphorics/oh-my-pi-plugin-qoder
 2. Run `/login` and choose **Qoder**.
 3. Complete authorization in the browser.
 4. Pick a `qoder/*` model from the model picker (`qoder/auto` is the server-side router and a safe default).
+
+At session start, the extension checks Qoder's `ultimate_200_free_invoke` activity and claims it when eligible. It verifies that eligibility clears before reporting success. Run `/claim-ultimate` to retry explicitly.
 
 For headless use with an existing Qoder device token:
 

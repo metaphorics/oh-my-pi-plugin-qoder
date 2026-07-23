@@ -55,7 +55,129 @@ export const QODER_API_ID = "qoder-completions";
 const OAUTH_TOKEN = process.env.QODER_OAUTH_TOKEN?.trim();
 const SKEW_MS = 60_000;
 const TOKEN_REQUEST_TIMEOUT_MS = 20_000;
+const CLAIM_REQUEST_TIMEOUT_MS = 20_000;
 const QODER_MAX_OUTPUT_TOKENS = 32_768;
+const ULTIMATE_CLAIM_ACTIVITY_ID = "ultimate_200_free_invoke";
+
+type ClaimCommandResult = {
+	readonly message: string;
+	readonly severity: "info" | "error";
+};
+
+type ClaimActivity = {
+	readonly activityId: string;
+	readonly canClaim: boolean;
+};
+
+type ClaimModelRegistry = {
+	find(provider: string, modelId: string): Model | undefined;
+	getApiKey(model: Model): Promise<string | undefined>;
+};
+
+let automaticClaimStarted = false;
+let claimInFlight: Promise<ClaimCommandResult> | undefined;
+
+async function readUltimateClaimActivity(
+	fetchImpl: FetchImpl,
+	headers: Record<string, string>,
+): Promise<ClaimActivity> {
+	const response = await fetchImpl(`${OPENAPI_BASE}/api/v2/activity/claim/eligibility`, {
+		headers,
+		signal: AbortSignal.timeout(CLAIM_REQUEST_TIMEOUT_MS),
+	});
+	if (!response.ok) throw new Error(`eligibility request failed (${response.status})`);
+	const payload: unknown = await response.json();
+	if (!isPlainObject(payload) || !Array.isArray(payload.data)) {
+		throw new Error("eligibility response was malformed");
+	}
+	for (const entry of payload.data) {
+		if (
+			isPlainObject(entry) &&
+			entry.activityId === ULTIMATE_CLAIM_ACTIVITY_ID &&
+			typeof entry.canClaim === "boolean"
+		) {
+			return { activityId: entry.activityId, canClaim: entry.canClaim };
+		}
+	}
+	throw new Error("Ultimate claim activity was unavailable");
+}
+
+export async function runClaimUltimate(
+	apiKey: string,
+	fetchImpl: FetchImpl = fetch,
+): Promise<ClaimCommandResult> {
+	const headers = {
+		Authorization: `Bearer ${apiKey}`,
+		Accept: "application/json",
+		"Cosy-ClientType": "5",
+		"Cosy-Version": CLI_VERSION,
+		"Cosy-MachineOS": machineOs(),
+		"Cosy-Data-Policy": QODER_PRIVATE_DATA_POLICY,
+	};
+	try {
+		const activity = await readUltimateClaimActivity(fetchImpl, headers);
+		if (!activity.canClaim) {
+			return {
+				message: "Qoder Ultimate claim is already complete or unavailable",
+				severity: "info",
+			};
+		}
+		const response = await fetchImpl(`${OPENAPI_BASE}/api/v2/activity/claim`, {
+			method: "POST",
+			headers: { ...headers, "Content-Type": "application/json" },
+			body: JSON.stringify({ activityId: activity.activityId }),
+			signal: AbortSignal.timeout(CLAIM_REQUEST_TIMEOUT_MS),
+		});
+		if (!response.ok) throw new Error(`claim request failed (${response.status})`);
+		const verified = await readUltimateClaimActivity(fetchImpl, headers);
+		if (verified.canClaim) throw new Error("claim did not change eligibility");
+		return { message: "Qoder Ultimate free calls claimed", severity: "info" };
+	} catch {
+		return { message: "Qoder Ultimate claim failed", severity: "error" };
+	}
+}
+
+async function claimUltimateForRegistry(registry: ClaimModelRegistry): Promise<ClaimCommandResult> {
+	const model = registry.find(PROVIDER_ID, "auto");
+	if (!model) return { message: "Qoder provider is unavailable", severity: "error" };
+	try {
+		const apiKey = await registry.getApiKey(model);
+		if (!apiKey) return { message: "Qoder login is required", severity: "error" };
+		return runClaimUltimate(apiKey);
+	} catch {
+		return { message: "Qoder Ultimate claim failed", severity: "error" };
+	}
+}
+
+type AutomaticClaimDeps = {
+	readonly run: () => Promise<ClaimCommandResult>;
+	readonly notify: (result: ClaimCommandResult) => void;
+};
+
+export function runClaimOnce(run: () => Promise<ClaimCommandResult>): Promise<ClaimCommandResult> {
+	if (claimInFlight !== undefined) return claimInFlight;
+	const claim = run();
+	claimInFlight = claim;
+	const clear = (): void => {
+		if (claimInFlight === claim) claimInFlight = undefined;
+	};
+	void claim.then(clear, clear);
+	return claim;
+}
+
+export function startAutomaticClaim({ run, notify }: AutomaticClaimDeps): void {
+	if (automaticClaimStarted) return;
+	automaticClaimStarted = true;
+	void runClaimOnce(run)
+		.then((result) => {
+			if (result.severity === "error") automaticClaimStarted = false;
+			notify(result);
+		})
+		.catch(() => {
+			automaticClaimStarted = false;
+			notify({ message: "Qoder Ultimate claim failed", severity: "error" });
+		});
+}
 
 // ---------------------------------------------------------------------------
 // Model catalog
@@ -1003,6 +1125,25 @@ export async function refreshQoderToken(
 // ---------------------------------------------------------------------------
 
 export default function registerQoder(pi: ExtensionAPI): void {
+	pi.on("session_start", (_event, ctx) => {
+		startAutomaticClaim({
+			run: () => claimUltimateForRegistry(ctx.modelRegistry),
+			notify: (result) => {
+				if (ctx.hasUI && result.severity === "info") ctx.ui.notify(result.message, result.severity);
+			},
+		});
+	});
+	pi.registerCommand("claim-ultimate", {
+		description: "Claim Qoder Ultimate free calls",
+		handler: async (args, ctx) => {
+			if (args.trim().length > 0) {
+				ctx.ui.notify("Usage: /claim-ultimate", "error");
+				return;
+			}
+			const result = await runClaimOnce(() => claimUltimateForRegistry(ctx.modelRegistry));
+			ctx.ui.notify(result.message, result.severity);
+		},
+	});
 	if (getOAuthProviders().some((provider) => provider.id === PROVIDER_ID)) {
 		pi.logger.info(
 			"Qoder provider is already available in omp; plugin registration skipped",

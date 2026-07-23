@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
+import type { FetchImpl } from "@oh-my-pi/pi-ai";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getQoderApi3Bridge } from "../src/index.js";
+import {
+	getQoderApi3Bridge,
+	runClaimOnce,
+	runClaimUltimate,
+} from "../src/index.js";
 
 /** Whether this machine has a usable qodercli auth WASM (drives the 37-row test's skip). */
 const wasmBridgeAvailable = getQoderApi3Bridge() !== null;
@@ -10,6 +15,11 @@ const wasmBridgeAvailable = getQoderApi3Bridge() !== null;
 interface ChildResult {
 	initialCollision: boolean;
 	registrationCount: number;
+	automaticClaimRuns: number;
+	automaticClaimNotifications: string[];
+	sessionStartRegistrationCount: number;
+	commandRegistrationCount: number;
+	registeredCommandName: string | undefined;
 	registeredProvider: string | undefined;
 	baseUrl: string | undefined;
 	api: string | undefined;
@@ -24,6 +34,8 @@ interface ChildResult {
 	handlerIdentitiesMatch: boolean;
 	apiKey: string | undefined;
 	collisionRegistrationCount: number;
+	collisionSessionStartRegistrationCount: number;
+	collisionCommandRegistrationCount: number;
 	collisionLogs: string[];
 }
 
@@ -34,15 +46,26 @@ import plugin, {
   MODEL_BASE,
   PROVIDER_ID,
   refreshQoderToken,
+  startAutomaticClaim,
 } from ${JSON.stringify(pluginUrl)};
 import { getOAuthProviders, registerOAuthProvider } from "@oh-my-pi/pi-ai/oauth";
 
 const initialCollision = getOAuthProviders().some(provider => provider.id === PROVIDER_ID);
 let registrationCount = 0;
+let sessionStartRegistrationCount = 0;
+let commandRegistrationCount = 0;
+let registeredCommandName;
 let registeredProvider;
 let config;
 plugin({
-  logger: { info() {} },
+  logger: { info() {}, warn() {} },
+  on(event) {
+    if (event === "session_start") sessionStartRegistrationCount++;
+  },
+  registerCommand(name) {
+    commandRegistrationCount++;
+    registeredCommandName = name;
+  },
   registerProvider(provider, value) {
     registrationCount++;
     registeredProvider = provider;
@@ -62,14 +85,46 @@ if (!initialCollision) {
   });
 }
 let collisionRegistrationCount = 0;
+let collisionSessionStartRegistrationCount = 0;
+let collisionCommandRegistrationCount = 0;
 const collisionLogs = [];
 plugin({
-  logger: { info(message) { collisionLogs.push(message); } },
+  logger: { info(message) { collisionLogs.push(message); }, warn() {} },
+  on(event) { if (event === "session_start") collisionSessionStartRegistrationCount++; },
+  registerCommand() { collisionCommandRegistrationCount++; },
   registerProvider() { collisionRegistrationCount++; },
 });
+const automaticResults = [
+  { message: "failed", severity: "error" },
+  { message: "claimed", severity: "info" },
+];
+const automaticClaimNotifications = [];
+let automaticClaimRuns = 0;
+let notification = Promise.withResolvers();
+const runAutomaticClaim = async () => {
+  automaticClaimRuns++;
+  const result = automaticResults.shift();
+  if (!result) throw new Error("unexpected automatic claim");
+  return result;
+};
+const notifyAutomaticClaim = result => {
+  automaticClaimNotifications.push(result.message);
+  notification.resolve();
+};
+startAutomaticClaim({ run: runAutomaticClaim, notify: notifyAutomaticClaim });
+await notification.promise;
+notification = Promise.withResolvers();
+startAutomaticClaim({ run: runAutomaticClaim, notify: notifyAutomaticClaim });
+await notification.promise;
+startAutomaticClaim({ run: runAutomaticClaim, notify: notifyAutomaticClaim });
 process.stdout.write(JSON.stringify({
   initialCollision,
   registrationCount,
+  automaticClaimRuns,
+  automaticClaimNotifications,
+  sessionStartRegistrationCount,
+  commandRegistrationCount,
+  registeredCommandName,
   registeredProvider,
   baseUrl: config?.baseUrl,
   api: config?.api,
@@ -84,6 +139,8 @@ process.stdout.write(JSON.stringify({
   handlerIdentitiesMatch,
   apiKey,
   collisionRegistrationCount,
+  collisionSessionStartRegistrationCount,
+  collisionCommandRegistrationCount,
   collisionLogs,
 }));
 `;
@@ -138,6 +195,11 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	}
 	expect(result.initialCollision).toBe(false);
 	expect(result.registrationCount).toBe(1);
+	expect(result.automaticClaimRuns).toBe(2);
+	expect(result.automaticClaimNotifications).toEqual(["failed", "claimed"]);
+	expect(result.sessionStartRegistrationCount).toBe(1);
+	expect(result.commandRegistrationCount).toBe(1);
+	expect(result.registeredCommandName).toBe("claim-ultimate");
 	expect(result.registeredProvider).toBe("qoder");
 	expect(result.baseUrl).toBe("https://api2-v2.qoder.sh/model/v1");
 	expect(result.api).toBe("qoder-completions");
@@ -176,6 +238,8 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	expect(result.handlerIdentitiesMatch).toBe(true);
 	expect(result.apiKey).toBe("access-token");
 	expect(result.collisionRegistrationCount).toBe(0);
+	expect(result.collisionSessionStartRegistrationCount).toBe(1);
+	expect(result.collisionCommandRegistrationCount).toBe(1);
 	expect(result.collisionLogs).toEqual([
 		"Qoder provider is already available in omp; plugin registration skipped",
 	]);
@@ -210,3 +274,89 @@ test.skipIf(!wasmBridgeAvailable)(
 		expect(result.modelIds).toContain("qmodel_preview-400k");
 	},
 );
+
+test("claims an eligible Ultimate activity and verifies the postcondition", async () => {
+	const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+	const responses = [
+		{ code: 0, msg: "ok", data: [{ activityId: "ultimate_200_free_invoke", canClaim: true }] },
+		{ code: 0, msg: "ok", data: null },
+		{ code: 0, msg: "ok", data: [{ activityId: "ultimate_200_free_invoke", canClaim: false }] },
+	];
+	const fetchImpl: FetchImpl = async (input, init) => {
+		requests.push({
+			url: input.toString(),
+			method: init?.method ?? "GET",
+			body: typeof init?.body === "string" ? init.body : undefined,
+		});
+		return Response.json(responses.shift());
+	};
+
+	const result = await runClaimUltimate("access-token", fetchImpl);
+
+	expect(requests).toEqual([
+		{
+			url: "https://openapi.qoder.sh/api/v2/activity/claim/eligibility",
+			method: "GET",
+			body: undefined,
+		},
+		{
+			url: "https://openapi.qoder.sh/api/v2/activity/claim",
+			method: "POST",
+			body: '{"activityId":"ultimate_200_free_invoke"}',
+		},
+		{
+			url: "https://openapi.qoder.sh/api/v2/activity/claim/eligibility",
+			method: "GET",
+			body: undefined,
+		},
+	]);
+	expect(result).toEqual({ message: "Qoder Ultimate free calls claimed", severity: "info" });
+});
+
+test("does not post when Ultimate is already claimed or unavailable", async () => {
+	let requests = 0;
+	const result = await runClaimUltimate("access-token", async () => {
+		requests++;
+		return Response.json({
+			code: 0,
+			data: [{ activityId: "ultimate_200_free_invoke", canClaim: false }],
+		});
+	});
+
+	expect(requests).toBe(1);
+	expect(result).toEqual({
+		message: "Qoder Ultimate claim is already complete or unavailable",
+		severity: "info",
+	});
+});
+
+test("fails when the claim endpoint does not clear eligibility", async () => {
+	const responses = [
+		Response.json({ data: [{ activityId: "ultimate_200_free_invoke", canClaim: true }] }),
+		Response.json({ code: 0 }),
+		Response.json({ data: [{ activityId: "ultimate_200_free_invoke", canClaim: true }] }),
+	];
+	const result = await runClaimUltimate("access-token", async () => responses.shift()!);
+
+	expect(result).toEqual({ message: "Qoder Ultimate claim failed", severity: "error" });
+});
+
+test("shares one in-flight claim across automatic and manual entry points", async () => {
+	const pending = Promise.withResolvers<{
+		readonly message: string;
+		readonly severity: "info" | "error";
+	}>();
+	let runs = 0;
+	const execute = () => {
+		runs++;
+		return pending.promise;
+	};
+
+	const automatic = runClaimOnce(execute);
+	const manual = runClaimOnce(execute);
+	expect(automatic).toBe(manual);
+	pending.resolve({ message: "claimed", severity: "info" });
+
+	await expect(automatic).resolves.toEqual({ message: "claimed", severity: "info" });
+	expect(runs).toBe(1);
+});
