@@ -7,6 +7,7 @@ import {
 	getQoderApi3Bridge,
 	runClaimOnce,
 	runClaimUltimate,
+	triggerLazyClaim,
 } from "../src/index.js";
 
 /** Whether this machine has a usable qodercli auth WASM (drives the 37-row test's skip). */
@@ -197,7 +198,7 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	expect(result.registrationCount).toBe(1);
 	expect(result.automaticClaimRuns).toBe(2);
 	expect(result.automaticClaimNotifications).toEqual(["failed", "claimed"]);
-	expect(result.sessionStartRegistrationCount).toBe(1);
+	expect(result.sessionStartRegistrationCount).toBe(0);
 	expect(result.commandRegistrationCount).toBe(1);
 	expect(result.registeredCommandName).toBe("claim-ultimate");
 	expect(result.registeredProvider).toBe("qoder");
@@ -238,7 +239,7 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	expect(result.handlerIdentitiesMatch).toBe(true);
 	expect(result.apiKey).toBe("access-token");
 	expect(result.collisionRegistrationCount).toBe(0);
-	expect(result.collisionSessionStartRegistrationCount).toBe(1);
+	expect(result.collisionSessionStartRegistrationCount).toBe(0);
 	expect(result.collisionCommandRegistrationCount).toBe(1);
 	expect(result.collisionLogs).toEqual([
 		"Qoder provider is already available in omp; plugin registration skipped",
@@ -330,6 +331,23 @@ test("does not post when Ultimate is already claimed or unavailable", async () =
 	});
 });
 
+test("returns info severity when Ultimate activity is absent from eligibility response", async () => {
+	let requests = 0;
+	const result = await runClaimUltimate("access-token", async () => {
+		requests++;
+		return Response.json({
+			code: 0,
+			data: [{ activityId: "some_other_activity", canClaim: true }],
+		});
+	});
+
+	expect(requests).toBe(1);
+	expect(result).toEqual({
+		message: "Qoder Ultimate claim is already complete or unavailable",
+		severity: "info",
+	});
+});
+
 test("fails when the claim endpoint does not clear eligibility", async () => {
 	const responses = [
 		Response.json({ data: [{ activityId: "ultimate_200_free_invoke", canClaim: true }] }),
@@ -359,4 +377,21 @@ test("shares one in-flight claim across automatic and manual entry points", asyn
 
 	await expect(automatic).resolves.toEqual({ message: "claimed", severity: "info" });
 	expect(runs).toBe(1);
+});
+test("triggerLazyClaim triggers automatic claim asynchronously with provided API key", async () => {
+	const requests: string[] = [];
+	const fetchImpl: FetchImpl = async (input) => {
+		requests.push(input.toString());
+		return Response.json({
+			code: 0,
+			data: [{ activityId: "ultimate_200_free_invoke", canClaim: false }],
+		});
+	};
+
+	triggerLazyClaim("test-key-lazy", fetchImpl);
+	const result = await runClaimOnce(() => runClaimUltimate("test-key-lazy", fetchImpl));
+	expect(requests.length).toBeGreaterThan(0);
+	expect(requests[0]).toContain("api/v2/activity/claim/eligibility");
+	expect(result.message).toBe("Qoder Ultimate claim is already complete or unavailable");
+	expect(result.severity).toBe("info");
 });

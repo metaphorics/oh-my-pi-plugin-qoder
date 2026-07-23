@@ -99,7 +99,7 @@ async function readUltimateClaimActivity(
 			return { activityId: entry.activityId, canClaim: entry.canClaim };
 		}
 	}
-	throw new Error("Ultimate claim activity was unavailable");
+	return { activityId: ULTIMATE_CLAIM_ACTIVITY_ID, canClaim: false };
 }
 
 export async function runClaimUltimate(
@@ -177,6 +177,13 @@ export function startAutomaticClaim({ run, notify }: AutomaticClaimDeps): void {
 			automaticClaimStarted = false;
 			notify({ message: "Qoder Ultimate claim failed", severity: "error" });
 		});
+}
+
+export function triggerLazyClaim(apiKey: string, fetchImpl: FetchImpl = fetch): void {
+	startAutomaticClaim({
+		run: () => runClaimUltimate(apiKey, fetchImpl),
+		notify: () => {},
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1123,16 +1130,7 @@ export async function refreshQoderToken(
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
-
 export default function registerQoder(pi: ExtensionAPI): void {
-	pi.on("session_start", (_event, ctx) => {
-		startAutomaticClaim({
-			run: () => claimUltimateForRegistry(ctx.modelRegistry),
-			notify: (result) => {
-				if (ctx.hasUI && result.severity === "info") ctx.ui.notify(result.message, result.severity);
-			},
-		});
-	});
 	pi.registerCommand("claim-ultimate", {
 		description: "Claim Qoder Ultimate free calls",
 		handler: async (args, ctx) => {
@@ -1159,7 +1157,13 @@ export default function registerQoder(pi: ExtensionAPI): void {
 	const config: ProviderConfig = {
 		baseUrl: MODEL_BASE,
 		api: QODER_API_ID,
-		streamSimple: streamQoderSimple,
+		streamSimple: (model, context, options) => {
+			const apiKey = options?.apiKey as string | undefined;
+			if (typeof apiKey === "string" && apiKey.length > 0) {
+				triggerLazyClaim(apiKey);
+			}
+			return streamQoderSimple(model, context, options);
+		},
 		...(OAUTH_TOKEN ? { apiKey: OAUTH_TOKEN } : {}),
 		authHeader: true,
 		// Client-attribution headers the Qoder gateway expects from its CLI. No

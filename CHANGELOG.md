@@ -1,11 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.1] - 2026-07-24
 
-### Added
+### Fixed
 
-- Automatically claims the `ultimate_200_free_invoke` activity at session start when the signed-in Qoder account is eligible. `/claim-ultimate` remains available for an explicit retry.
-
+- Deferred automatic Ultimate claim to the first authenticated model request instead of session startup, eliminating startup overhead.
+- Gracefully handled missing or ineligible Ultimate activity in eligibility response with `info` status to prevent false error notifications.
 ## [0.3.0] - 2026-07-22
 
 ### Added
