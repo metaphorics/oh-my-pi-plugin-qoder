@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Automatically claims the `ultimate_200_free_invoke` activity at session start when the signed-in Qoder account is eligible. `/claim-ultimate` remains available for an explicit retry.
+
 ## [0.3.0] - 2026-07-22
 
 ### Added
