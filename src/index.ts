@@ -1131,6 +1131,14 @@ export async function refreshQoderToken(
 // Registration
 // ---------------------------------------------------------------------------
 export default function registerQoder(pi: ExtensionAPI): void {
+	pi.on("session_start", (_event, ctx) => {
+		startAutomaticClaim({
+			run: () => claimUltimateForRegistry(ctx.modelRegistry),
+			notify: (result) => {
+				if (ctx.hasUI && result.severity === "info") ctx.ui.notify(result.message, result.severity);
+			},
+		});
+	});
 	pi.registerCommand("claim-ultimate", {
 		description: "Claim Qoder Ultimate free calls",
 		handler: async (args, ctx) => {
