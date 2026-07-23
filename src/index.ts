@@ -1131,14 +1131,6 @@ export async function refreshQoderToken(
 // Registration
 // ---------------------------------------------------------------------------
 export default function registerQoder(pi: ExtensionAPI): void {
-	pi.on("session_start", (_event, ctx) => {
-		startAutomaticClaim({
-			run: () => claimUltimateForRegistry(ctx.modelRegistry),
-			notify: (result) => {
-				if (ctx.hasUI && result.severity === "info") ctx.ui.notify(result.message, result.severity);
-			},
-		});
-	});
 	pi.registerCommand("claim-ultimate", {
 		description: "Claim Qoder Ultimate free calls",
 		handler: async (args, ctx) => {
@@ -1154,6 +1146,14 @@ export default function registerQoder(pi: ExtensionAPI): void {
 		pi.logger.info(
 			"Qoder provider is already available in omp; plugin registration skipped",
 		);
+		pi.on("session_start", (_event, ctx) => {
+			startAutomaticClaim({
+				run: () => claimUltimateForRegistry(ctx.modelRegistry),
+				notify: (result) => {
+					if (ctx.hasUI && result.severity === "info") ctx.ui.notify(result.message, result.severity);
+				},
+			});
+		});
 		return;
 	}
 	// api3-only models require the auth WASM; without it they are not

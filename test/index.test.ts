@@ -198,7 +198,7 @@ test("registers the legacy 19-row contract without a WASM bridge and skips a nat
 	expect(result.registrationCount).toBe(1);
 	expect(result.automaticClaimRuns).toBe(2);
 	expect(result.automaticClaimNotifications).toEqual(["failed", "claimed"]);
-	expect(result.sessionStartRegistrationCount).toBe(1);
+	expect(result.sessionStartRegistrationCount).toBe(0);
 	expect(result.commandRegistrationCount).toBe(1);
 	expect(result.registeredCommandName).toBe("claim-ultimate");
 	expect(result.registeredProvider).toBe("qoder");
